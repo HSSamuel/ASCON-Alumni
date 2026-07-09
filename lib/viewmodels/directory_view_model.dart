@@ -1,0 +1,258 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hive/hive.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+
+import '../services/api_client.dart';
+import '../services/data_service.dart';
+import '../services/socket_service.dart';
+
+class DirectoryState {
+  final List<dynamic> allAlumni;
+  final List<dynamic> searchResults;
+  final Map<String, List<dynamic>> groupedAlumni;
+  final List<dynamic> smartMatches;
+  
+  final bool isLoadingDirectory;
+  final bool isLoadingMatches;
+  
+  final String activeFilter; 
+
+  const DirectoryState({
+    this.allAlumni = const [],
+    this.searchResults = const [],
+    this.groupedAlumni = const {},
+    this.smartMatches = const [],
+    this.isLoadingDirectory = false,
+    this.isLoadingMatches = false,
+    this.activeFilter = "All",
+  });
+
+  DirectoryState copyWith({
+    List<dynamic>? allAlumni,
+    List<dynamic>? searchResults,
+    Map<String, List<dynamic>>? groupedAlumni,
+    List<dynamic>? smartMatches,
+    bool? isLoadingDirectory,
+    bool? isLoadingMatches,
+    String? activeFilter,
+  }) {
+    return DirectoryState(
+      allAlumni: allAlumni ?? this.allAlumni,
+      searchResults: searchResults ?? this.searchResults,
+      groupedAlumni: groupedAlumni ?? this.groupedAlumni,
+      smartMatches: smartMatches ?? this.smartMatches,
+      isLoadingDirectory: isLoadingDirectory ?? this.isLoadingDirectory,
+      isLoadingMatches: isLoadingMatches ?? this.isLoadingMatches,
+      activeFilter: activeFilter ?? this.activeFilter,
+    );
+  }
+}
+
+class DirectoryNotifier extends StateNotifier<DirectoryState> {
+  final ApiClient _api = ApiClient();
+  final DataService _dataService = DataService();
+  final SocketService _socket = SocketService(); // ✅ Extracted for real-time hooks
+  StreamSubscription? _statusSubscription;
+  
+  final Box _cacheBox = Hive.box('ascon_cache');
+
+  DirectoryNotifier() : super(const DirectoryState()) {
+    init();
+  }
+
+  void init() {
+    loadDirectory();
+    loadSmartMatches();
+    _setupPresenceListener(); // ✅ Active directory optimization initialized
+  }
+
+  void clearState() {
+    if (mounted) {
+      state = const DirectoryState();
+    }
+  }
+
+  @override
+  void dispose() {
+    _statusSubscription?.cancel(); // ✅ Prevents memory leaks
+    super.dispose();
+  }
+
+  // ✅ ACTIVE PRESENCE SYNC: Automatically refreshes the UI online dots whenever backend broadcasts.
+  void _setupPresenceListener() {
+    _statusSubscription = _socket.userStatusStream.listen((data) {
+      if (!mounted) return;
+      final String userId = data['userId'].toString();
+      final bool isOnline = data['isOnline'] == true;
+      final dynamic lastSeen = data['lastSeen'];
+
+      Map<String, dynamic> updateItem(dynamic item) {
+        final Map<String, dynamic> map = item is Map ? Map<String, dynamic>.from(item) : {};
+        final String uid = (map['userId'] ?? map['_id'] ?? '').toString();
+        if (uid == userId) {
+          map['isOnline'] = isOnline;
+          if (lastSeen != null) map['lastSeen'] = lastSeen;
+        }
+        return map;
+      }
+
+      final updatedAll = state.allAlumni.map(updateItem).toList();
+      final updatedSearch = state.searchResults.map(updateItem).toList();
+      final updatedMatches = state.smartMatches.map(updateItem).toList();
+
+      state = state.copyWith(
+        allAlumni: updatedAll,
+        searchResults: updatedSearch,
+        smartMatches: updatedMatches,
+        groupedAlumni: _groupUsersByYear(updatedSearch),
+      );
+    });
+  }
+
+  void setFilter(String filter) {
+    state = state.copyWith(activeFilter: filter);
+    loadDirectory(); 
+  }
+
+  Future<void> loadDirectory({String query = ""}) async {
+    final String cacheKey = 'dir_cache_${state.activeFilter}';
+    final String timeKey = 'dir_cache_time_${state.activeFilter}';
+
+    if (query.isEmpty) {
+      final String? cachedDataString = _cacheBox.get(cacheKey);
+      final int? cacheTimestamp = _cacheBox.get(timeKey);
+      
+      bool isCacheValid = false;
+
+      if (cachedDataString != null && cacheTimestamp != null) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (now - cacheTimestamp < 604800000) {
+          isCacheValid = true;
+          try {
+            final List<dynamic> cachedList = jsonDecode(cachedDataString);
+            if (mounted) {
+              state = state.copyWith(
+                allAlumni: cachedList,
+                searchResults: cachedList,
+                groupedAlumni: _groupUsersByYear(cachedList),
+                isLoadingDirectory: false, 
+              );
+            }
+          } catch (e) {
+            isCacheValid = false;
+          }
+        } else {
+          _cacheBox.delete(cacheKey);
+          _cacheBox.delete(timeKey);
+        }
+      } 
+      
+      if (!isCacheValid && state.allAlumni.isEmpty) {
+        state = state.copyWith(isLoadingDirectory: true);
+      }
+    }
+
+    final connectivityResult = await (Connectivity().checkConnectivity());
+    bool isOffline = connectivityResult.contains(ConnectivityResult.none);
+    
+    if (isOffline) {
+      if (mounted && state.isLoadingDirectory) state = state.copyWith(isLoadingDirectory: false);
+      return; 
+    }
+
+    try {
+      String endpoint = '/api/directory?search=$query';
+      
+      if (state.activeFilter == "Classmates") endpoint += '&classmates=true';
+
+      final response = await _api.get(endpoint);
+
+      if (response['success'] == true) {
+        final dynamic rawData = response['data'];
+        List<dynamic> list = [];
+
+        if (rawData is List) {
+          list = rawData;
+        } else if (rawData is Map && rawData['data'] is List) {
+          list = rawData['data'];
+        }
+
+        if (query.isEmpty) {
+          await _cacheBox.put(cacheKey, jsonEncode(list));
+          await _cacheBox.put(timeKey, DateTime.now().millisecondsSinceEpoch);
+        }
+
+        if (mounted) {
+          state = state.copyWith(
+            allAlumni: list,
+            searchResults: list,
+            groupedAlumni: _groupUsersByYear(list),
+            isLoadingDirectory: false,
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) state = state.copyWith(isLoadingDirectory: false);
+    }
+  }
+
+  void onSearchChanged(String query) {
+    if (query.isEmpty) {
+      state = state.copyWith(
+        searchResults: state.allAlumni,
+        groupedAlumni: _groupUsersByYear(state.allAlumni)
+      );
+    } else {
+      final lowerQuery = query.toLowerCase();
+      final filtered = state.allAlumni.where((user) {
+        final name = (user['fullName'] ?? '').toString().toLowerCase();
+        final org = (user['organization'] ?? '').toString().toLowerCase();
+        final year = (user['yearOfAttendance'] ?? '').toString().toLowerCase();
+        final job = (user['jobTitle'] ?? '').toString().toLowerCase();
+        return name.contains(lowerQuery) || org.contains(lowerQuery) || year.contains(lowerQuery) || job.contains(lowerQuery);
+      }).toList();
+      
+      state = state.copyWith(
+        searchResults: filtered,
+        groupedAlumni: _groupUsersByYear(filtered)
+      );
+    }
+  }
+
+  Future<void> loadSmartMatches() async {
+    if (state.smartMatches.isEmpty) {
+      state = state.copyWith(isLoadingMatches: true);
+    }
+    try {
+      final matches = await _dataService.fetchSmartMatches();
+      if (mounted) state = state.copyWith(smartMatches: matches, isLoadingMatches: false);
+    } catch (_) {
+      if (mounted) state = state.copyWith(isLoadingMatches: false);
+    }
+  }
+
+  Map<String, List<dynamic>> _groupUsersByYear(List<dynamic> users) {
+    Map<String, List<dynamic>> groups = {};
+    for (var user in users) {
+      String year = user['yearOfAttendance']?.toString() ?? 'General';
+      if (year.trim().isEmpty || year == 'null') year = 'General';
+      if (!groups.containsKey(year)) groups[year] = [];
+      groups[year]!.add(user);
+    }
+    
+    var sortedKeys = groups.keys.toList()..sort((a, b) {
+      if (a == 'Others') return 1;
+      if (b == 'Others') return -1;
+      return b.compareTo(a);
+    });
+    return {for (var key in sortedKeys) key: groups[key]!};
+  }
+}
+
+final directoryProvider = StateNotifierProvider.autoDispose<DirectoryNotifier, DirectoryState>((ref) {
+  return DirectoryNotifier();
+});

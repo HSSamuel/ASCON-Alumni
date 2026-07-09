@@ -1,0 +1,981 @@
+// Full file content: lib/screens/call_screen.dart
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; 
+import 'package:flutter/foundation.dart'; 
+import 'package:google_fonts/google_fonts.dart';
+import 'package:audioplayers/audioplayers.dart'; 
+import 'package:agora_rtc_engine/agora_rtc_engine.dart'; 
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart' hide CallEvent; 
+import 'package:flutter_callkit_incoming/entities/entities.dart' hide CallEvent; 
+import '../services/call_service.dart';
+import '../services/socket_service.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+
+class CallScreen extends StatefulWidget {
+  final bool isGroupCall;          
+  final bool isVideoCall;          
+  final List<String>? targetIds;   
+  final String remoteName;
+  final String? remoteId;          
+  final String channelName; 
+  final String? remoteAvatar; 
+  final bool isIncoming; 
+  final bool autoAccept;
+  final String? currentUserName;   
+  final String? currentUserAvatar; 
+
+  const CallScreen({
+    super.key, 
+    this.isGroupCall = false, 
+    this.isVideoCall = false,      
+    this.targetIds,
+    required this.remoteName, 
+    this.remoteId,
+    required this.channelName,
+    this.remoteAvatar,
+    this.isIncoming = false, 
+    this.autoAccept = false,
+    this.currentUserName,     
+    this.currentUserAvatar,   
+  });
+
+  @override
+  State<CallScreen> createState() => _CallScreenState();
+}
+
+class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
+  final CallService _callService = CallService();
+  final SocketService _socketService = SocketService();
+  final AudioPlayer _audioPlayer = AudioPlayer(); 
+  
+  late String _currentChannel; 
+  
+  Map<int, String> _participantNames = {}; 
+  Map<int, String> _participantAvatars = {};
+
+  String _status = "Connecting...";
+  bool _isMuted = false;
+  bool _isVideoOff = false; 
+  String _selectedAudioRoute = 'Earpiece'; 
+  bool _isConnected = false;
+  bool _hasAccepted = false;
+  bool _isDisconnecting = false; 
+  int _activeGroupUsers = 0; 
+  bool _isDialing = false; 
+
+  StreamSubscription<CallEvent>? _listener;
+  StreamSubscription<Map<String, dynamic>>? _socketListener;
+  StreamSubscription<Map<String, dynamic>>? _userStatusSub; 
+  
+  Timer? _callTimer;
+  Duration _callDuration = Duration.zero;
+  late AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    WakelockPlus.enable();
+    
+    _currentChannel = widget.channelName; 
+    
+    if (widget.isVideoCall) {
+      _selectedAudioRoute = 'Speaker'; 
+    } else {
+      _selectedAudioRoute = 'Earpiece';
+    }
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1, milliseconds: 500),
+    )..repeat(reverse: true);
+
+    _listenToEvents();
+
+    if (widget.isIncoming) {
+      if (widget.autoAccept) {
+        _status = "Connecting...";
+        _acceptIncomingCall();
+      } else {
+        _status = widget.isVideoCall ? "Incoming Video Call..." : "Incoming Call...";
+        _pulseController.repeat(reverse: true);
+        _playRingtone(); 
+      }
+    } else {
+      _status = "Calling...";
+      _startOutgoingCall();
+      _playDialingSound(); 
+      
+      if (!widget.isGroupCall && widget.remoteId != null) {
+        _socketService.checkUserStatus(widget.remoteId!);
+      }
+    }
+  }
+
+  void _playRingtone() async {
+    await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+    await _audioPlayer.play(AssetSource('sounds/ringtone.mp3'));
+  }
+
+  void _playDialingSound() async {
+    _isDialing = true;
+    await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+    
+    if (_isDialing && mounted && (_status == "Calling..." || _status == "Ringing...")) {
+      await _audioPlayer.play(AssetSource('sounds/dialing.mp3'));
+    }
+  }
+
+  void _stopAudio() async {
+    _isDialing = false; 
+    await _audioPlayer.stop();
+  }
+
+  void _startOutgoingCall() async {
+    int myUid = (widget.currentUserName ?? "Unknown User").hashCode.abs(); 
+    bool success = await _callService.joinCall(channelName: _currentChannel, isVideo: widget.isVideoCall, uid: myUid); 
+    
+    if (!mounted) return; 
+
+    if (success) {
+      if (!kIsWeb) {
+        _callService.setAudioRoute(_selectedAudioRoute); 
+      }
+
+      _socketService.socket?.emit('join_room', _currentChannel);
+
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _socketService.socket?.emit('call_participant_info', {
+          'channelName': _currentChannel,
+          'uid': myUid,
+          'name': widget.currentUserName ?? "Unknown User",
+          'avatar': widget.currentUserAvatar ?? ""
+        });
+      });
+
+      Map<String, dynamic> callerPayload = {
+        'callerName': widget.currentUserName ?? "Unknown User", 
+        'callerAvatar': widget.currentUserAvatar,
+        'isGroupCall': widget.isGroupCall,
+        'isVideoCall': widget.isVideoCall, 
+        'groupName': widget.remoteName 
+      };
+
+      if (widget.isGroupCall && widget.targetIds != null) {
+        for (String target in widget.targetIds!) {
+          _socketService.initiateCall(target, _currentChannel, callerPayload);
+        }
+      } else if (widget.remoteId != null) {
+        _socketService.initiateCall(widget.remoteId!, _currentChannel, callerPayload);
+      }
+    } else {
+      _endCallUI("Call Failed");
+    }
+  }
+
+  void _acceptIncomingCall() async {
+    if (_hasAccepted || _isDisconnecting) return; 
+    setState(() {
+      _hasAccepted = true;
+      _status = "Connecting...";
+    });
+    
+    _stopAudio(); 
+
+    // ✅ FIX 3: Ensures the socket is fully connected on cold-start before answering
+    if (_socketService.socket == null || !_socketService.socket!.connected) {
+       await _socketService.initSocket();
+       // Give it a brief moment to connect
+       await Future.delayed(const Duration(milliseconds: 1500));
+    }
+
+    if (widget.remoteId != null) {
+      _socketService.answerCall(widget.remoteId!, _currentChannel);
+    }
+    
+    int myUid = (widget.currentUserName ?? "Unknown User").hashCode.abs(); 
+    await _callService.joinCall(channelName: _currentChannel, isVideo: widget.isVideoCall, uid: myUid);
+    
+    _socketService.socket?.emit('join_room', _currentChannel);
+
+    Future.delayed(const Duration(milliseconds: 500), () {
+       _socketService.socket?.emit('call_participant_info', {
+        'channelName': _currentChannel,
+        'uid': myUid,
+        'name': widget.currentUserName ?? "Unknown User",
+        'avatar': widget.currentUserAvatar ?? ""
+      });
+    });
+
+    if (!kIsWeb) {
+      _callService.setAudioRoute(_selectedAudioRoute); 
+    }
+  }
+
+  void _rejectCall() {
+    if (_isDisconnecting) return;
+    setState(() => _isDisconnecting = true);
+
+    if (widget.remoteId != null) {
+      _socketService.endCall(widget.remoteId!, _currentChannel);
+    }
+    _endCallUI("Declined");
+  }
+
+  void _endCall() {
+    if (_isDisconnecting) return;
+    setState(() => _isDisconnecting = true);
+
+    if (widget.isGroupCall && widget.targetIds != null && !widget.isIncoming) {
+      for(String target in widget.targetIds!) {
+        _socketService.endCall(target, _currentChannel);
+      }
+    } else if (widget.remoteId != null) {
+      _socketService.endCall(widget.remoteId!, _currentChannel);
+    }
+    _endCallUI("Call Ended");
+  }
+
+  void _listenToEvents() {
+    _listener = _callService.callEvents.listen((event) {
+      if (!mounted) return;
+      
+      if (event == CallEvent.volumeChanged) {
+        setState(() {}); 
+        return;
+      }
+
+      setState(() {
+        if (event == CallEvent.connected || event == CallEvent.userJoined || event == CallEvent.userOffline) {
+          
+          if (event == CallEvent.userJoined) {
+             int myUid = (widget.currentUserName ?? "Unknown User").hashCode.abs();
+             Future.delayed(const Duration(milliseconds: 500), () {
+               _socketService.socket?.emit('call_participant_info', {
+                 'channelName': _currentChannel,
+                 'uid': myUid,
+                 'name': widget.currentUserName ?? "Unknown User",
+                 'avatar': widget.currentUserAvatar ?? ""
+               });
+             });
+          }
+
+          if (widget.isGroupCall) {
+            _activeGroupUsers = _callService.remoteUids.length;
+            _status = "Connected ($_activeGroupUsers joined)";
+          } else {
+            _status = "Connected";
+          }
+          
+          if (!_isConnected && event != CallEvent.userOffline) {
+            _isConnected = true;
+            _stopAudio(); 
+            _pulseController.stop();
+            _startTimer();
+          }
+        } else if (event == CallEvent.callEnded) {
+          if (widget.isGroupCall) {
+            _activeGroupUsers = _callService.remoteUids.length;
+            if (_activeGroupUsers == 0) _status = "Waiting for others...";
+          } else {
+            _endCallUI("Call Ended");
+          }
+        }
+      });
+    });
+
+    _socketListener = _socketService.callEvents.listen((event) {
+      if (!mounted) return;
+      
+      if (event['type'] == 'participant_info' && event['data']['channelName'] == _currentChannel) {
+        setState(() {
+          _participantNames[event['data']['uid']] = event['data']['name'];
+          _participantAvatars[event['data']['uid']] = event['data']['avatar'];
+        });
+      }
+
+      if (event['type'] == 'ended' && event['data']['channelName'] == _currentChannel) {
+        if (event['data']['reason'] == "collision_merge") {
+           String existingChannel = event['data']['existingChannel'];
+           
+           _callService.leaveCall(); 
+           
+           setState(() {
+             _currentChannel = existingChannel;
+             _status = "Connecting...";
+             _hasAccepted = true; 
+           });
+           
+           _socketService.answerCall(widget.remoteId!, _currentChannel);
+           int myUid = (widget.currentUserName ?? "Unknown").hashCode.abs();
+           _callService.joinCall(channelName: _currentChannel, isVideo: widget.isVideoCall, uid: myUid);
+           return; 
+        }
+
+        String endMessage = "Call Ended";
+        if (event['data']['reason'] == "No Answer") {
+          endMessage = "No answer";
+        } else if (event['data']['reason'] == "user_busy") {
+          endMessage = "User is busy";
+        }
+
+        if (widget.isGroupCall) {
+           if (widget.isIncoming && !_hasAccepted && event['data']['callerId'] == widget.remoteId) {
+             _endCallUI(endMessage);
+           }
+        } else {
+           _endCallUI(endMessage);
+        }
+      } else if (event['type'] == 'answered' && event['data']['channelName'] == _currentChannel) {
+        if (!widget.isGroupCall) {
+          setState(() => _status = "Connecting Audio...");
+        }
+      }
+    });
+
+    _userStatusSub = _socketService.userStatusStream.listen((data) {
+       if (!mounted || widget.isIncoming || widget.isGroupCall) return;
+       
+       if (data['userId'] == widget.remoteId) {
+          if (data['isOnline'] == true && _status == "Calling...") {
+             setState(() => _status = "Ringing...");
+          }
+       }
+    });
+  }
+
+  void _endCallUI(String message) async {
+    if (!mounted) return;
+    setState(() {
+      _status = message;
+      _isDisconnecting = true; 
+    });
+    
+    _stopAudio(); 
+    _stopTimer();
+    _pulseController.stop();
+    _callService.leaveCall();
+    
+    if (!kIsWeb) {
+      await FlutterCallkitIncoming.endAllCalls();
+    }
+    
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context);
+    });
+  }
+
+  void _startTimer() {
+    if (_callTimer != null && _callTimer!.isActive) return;
+    _callTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() => _callDuration += const Duration(seconds: 1));
+        
+        if (_callDuration.inSeconds % 10 == 0) {
+          _socketService.sendCallHeartbeat(_currentChannel);
+        }
+      }
+    });
+  }
+
+  void _stopTimer() => _callTimer?.cancel();
+
+  String get _formattedDuration {
+    String twoDigits(int n) => n.toString().padLeft(2, "0");
+    String minutes = twoDigits(_callDuration.inMinutes.remainder(60));
+    String seconds = twoDigits(_callDuration.inSeconds.remainder(60));
+    return _callDuration.inHours > 0 ? "${twoDigits(_callDuration.inHours)}:$minutes:$seconds" : "$minutes:$seconds";
+  }
+
+  Future<void> _showDeviceSelectorDialog() async {
+    List<AudioDeviceInfo> devices = await _callService.getPlaybackDevices();
+    
+    if (devices.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("No specific audio devices found by browser/OS.")),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2C2C2C),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text("Select Audio Output", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: devices.length,
+              itemBuilder: (context, index) {
+                final device = devices[index];
+                return ListTile(
+                  leading: const Icon(Icons.speaker, color: Colors.white70),
+                  title: Text(device.deviceName ?? "Unknown Device", style: const TextStyle(color: Colors.white)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  onTap: () {
+                    if (device.deviceId != null) {
+                      _callService.setPlaybackDevice(device.deviceId!);
+                      setState(() => _selectedAudioRoute = 'Speaker'); 
+                    }
+                    Navigator.pop(context);
+                  },
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel", style: TextStyle(color: Colors.redAccent)),
+            )
+          ],
+        );
+      }
+    );
+  }
+
+  @override
+  void dispose() {
+    WakelockPlus.disable();
+    _stopAudio(); 
+    _audioPlayer.dispose();
+    _listener?.cancel();
+    _socketListener?.cancel();
+    _userStatusSub?.cancel();
+    _stopTimer();
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: widget.isGroupCall ? const Color(0xFF121B22) : Colors.black,
+      body: SafeArea(
+        child: (widget.isGroupCall && _isConnected) 
+            ? _buildWhatsAppGroupUI() 
+            : _buildStandardOneOnOneUI(), 
+      ),
+    );
+  }
+
+  Widget _buildWhatsAppGroupUI() {
+    return Column(
+      children: [
+        _buildGroupTopBar(),
+        Expanded(
+          child: _buildGroupGrid(),
+        ),
+        _buildGroupBottomBar(),
+      ],
+    );
+  }
+
+  Widget _buildGroupTopBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: const BoxDecoration(color: Color(0xFF1F2C34), shape: BoxShape.circle),
+            child: const Icon(Icons.close_fullscreen, color: Colors.white, size: 20),
+          ),
+          
+          Column(
+            children: [
+              Text(
+                widget.remoteName.toUpperCase(),
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _formattedDuration,
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+            ],
+          ),
+
+          GestureDetector(
+            onTap: () {
+              final link = "https://asconalumni.org/join-call?channel=${widget.channelName}";
+              Clipboard.setData(ClipboardData(text: link));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Call link copied to clipboard!"), backgroundColor: Colors.green)
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: const BoxDecoration(color: Color(0xFF1F2C34), shape: BoxShape.circle),
+              child: const Icon(Icons.person_add, color: Colors.white, size: 20),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGroupGrid() {
+    List<int> allUsers = [0, ..._callService.remoteUids]; 
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(16),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 0.85, 
+      ),
+      itemCount: allUsers.length,
+      itemBuilder: (context, index) {
+        final uid = allUsers[index];
+        final isMe = uid == 0;
+        
+        final colors = [Colors.pinkAccent, Colors.blueAccent, Colors.purpleAccent, Colors.orangeAccent];
+        final cardColor = colors[index % colors.length];
+        
+        final displayName = isMe ? "You" : (_participantNames[uid] ?? "Unknown User");
+        final displayAvatar = isMe ? widget.currentUserAvatar : _participantAvatars[uid];
+        final isSpeaking = _callService.activeSpeakers.contains(uid); 
+        bool isUserMuted = false;
+
+        return _buildParticipantCard(
+          name: displayName, 
+          avatarUrl: displayAvatar, 
+          isMuted: isUserMuted,
+          isSpeaking: isSpeaking,
+          activeColor: cardColor,
+        );
+      },
+    );
+  }
+
+  Widget _buildParticipantCard({required String name, String? avatarUrl, required bool isMuted, required bool isSpeaking, required Color activeColor}) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F2C34), 
+        borderRadius: BorderRadius.circular(16),
+        border: isSpeaking ? Border.all(color: activeColor, width: 3) : Border.all(color: Colors.transparent, width: 3),
+        boxShadow: [
+          if (isSpeaking) 
+            BoxShadow(
+              color: activeColor.withOpacity(0.6),
+              blurRadius: 15,
+              spreadRadius: 2,
+            )
+        ]
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircleAvatar(
+                radius: 35,
+                backgroundColor: Colors.grey[800],
+                backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty && !avatarUrl.contains('profile/picture')) ? NetworkImage(avatarUrl) : null,
+                child: (avatarUrl == null || avatarUrl.isEmpty || avatarUrl.contains('profile/picture')) ? const Icon(Icons.person, color: Colors.white54, size: 35) : null,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                name,
+                style: TextStyle(
+                  color: isSpeaking ? activeColor : Colors.white, 
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          
+          if (isMuted)
+            Positioned(
+              top: 12,
+              right: 12,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                child: const Icon(Icons.mic_off, color: Colors.white, size: 14),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGroupBottomBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+      decoration: const BoxDecoration(
+        color: Color(0xFF121B22),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _buildWhatsAppBtn(Icons.more_horiz, Colors.white12, Colors.white, () {}),
+          _buildWhatsAppBtn(_isVideoOff ? Icons.videocam_off : Icons.videocam, Colors.white, Colors.black, () {
+            setState(() => _isVideoOff = !_isVideoOff);
+            _callService.toggleVideo(_isVideoOff);
+          }),
+          _buildWhatsAppBtn(_selectedAudioRoute == 'Speaker' ? Icons.volume_up : Icons.hearing, Colors.white, Colors.black, () {
+             if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows || defaultTargetPlatform == TargetPlatform.linux || defaultTargetPlatform == TargetPlatform.macOS) {
+               _showDeviceSelectorDialog();
+             } else {
+               _callService.setAudioRoute(_selectedAudioRoute == 'Speaker' ? 'Earpiece' : 'Speaker');
+               setState(() => _selectedAudioRoute = _selectedAudioRoute == 'Speaker' ? 'Earpiece' : 'Speaker');
+             }
+          }),
+          _buildWhatsAppBtn(_isMuted ? Icons.mic_off : Icons.mic, Colors.white, Colors.black, () {
+             setState(() => _isMuted = !_isMuted);
+             _callService.toggleMute(_isMuted);
+          }),
+          _buildWhatsAppBtn(Icons.call_end, Colors.redAccent, Colors.white, _endCall),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWhatsAppBtn(IconData icon, Color bgColor, Color iconColor, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: bgColor, shape: BoxShape.circle),
+        child: Icon(icon, color: iconColor, size: 26),
+      ),
+    );
+  }
+
+  Widget _buildStandardOneOnOneUI() {
+    return Stack( 
+      children: [
+        if (widget.isVideoCall && _isConnected)
+          _buildVideoGrid()
+        else
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                colors: [Color(0xFF0F3621), Colors.black],
+              ),
+            ),
+          ),
+
+        Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (!widget.isVideoCall || !_isConnected) const Spacer(flex: 2),
+            
+            if (!widget.isVideoCall || !_isConnected)
+              _buildPulsingAvatar(),
+            
+            const SizedBox(height: 30),
+            
+            if (!widget.isVideoCall || !_isConnected)
+              if (widget.isGroupCall)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  margin: const EdgeInsets.only(bottom: 8.0),
+                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(20)),
+                  child: Text(widget.isVideoCall ? "GROUP VIDEO CALL" : "GROUP CALL", style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+
+            if (!widget.isVideoCall || !_isConnected)
+              Text(
+                widget.remoteName,
+                style: GoogleFonts.lato(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold, shadows: [const Shadow(color: Colors.black, blurRadius: 10)]),
+                textAlign: TextAlign.center,
+              ),
+            
+            const SizedBox(height: 12),
+            
+            if (!widget.isVideoCall || !_isConnected || widget.isGroupCall)
+              Text(
+                _isConnected ? _formattedDuration : _status,
+                style: GoogleFonts.lato(color: Colors.white70, fontSize: _isConnected ? 20 : 16, shadows: [const Shadow(color: Colors.black, blurRadius: 10)]),
+              ),
+
+            const Spacer(flex: 3),
+            
+            Padding(
+              padding: const EdgeInsets.only(bottom: 30.0),
+              child: widget.isIncoming && !_hasAccepted 
+              ? Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildActionCircle(Icons.call_end, Colors.redAccent, _rejectCall),
+                    _buildActionCircle(widget.isVideoCall ? Icons.videocam : Icons.call, Colors.green, _acceptIncomingCall),
+                  ],
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.isVideoCall) ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildSmallBtn(Icons.flip_camera_ios, "Flip", () {
+                            if (kIsWeb) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("Camera flip is managed by browser."),
+                                  duration: Duration(seconds: 2),
+                                )
+                              );
+                              return;
+                            }
+                            _callService.switchCamera();
+                          }),
+                          const SizedBox(width: 40),
+                          _buildSmallBtn(_isVideoOff ? Icons.videocam_off : Icons.videocam, _isVideoOff ? "Video Off" : "Video On", () {
+                            setState(() => _isVideoOff = !_isVideoOff);
+                            _callService.toggleVideo(_isVideoOff);
+                          }, isActive: !_isVideoOff),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+
+                    Row( 
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildControlButton(
+                          icon: _isMuted ? Icons.mic_off : Icons.mic,
+                          label: "Mute",
+                          isActive: _isMuted,
+                          onTap: () {
+                            setState(() => _isMuted = !_isMuted);
+                            _callService.toggleMute(_isMuted);
+                          },
+                        ),
+                        _buildActionCircle(Icons.call_end, Colors.redAccent, _endCall),
+                        _buildAudioRouteMenu(),
+                      ],
+                    ),
+                  ],
+                ),
+            ),
+          ],
+        ),
+
+        if (widget.isVideoCall && _isConnected && !_isVideoOff)
+           Positioned(
+             right: 16,
+             top: 20,
+             child: Container(
+               width: 110, height: 160,
+               decoration: BoxDecoration(
+                 color: Colors.black,
+                 borderRadius: BorderRadius.circular(16),
+                 border: Border.all(color: Colors.white24, width: 2),
+                 boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 10)]
+               ),
+               child: ClipRRect(
+                 borderRadius: BorderRadius.circular(14),
+                 child: AgoraVideoView(
+                   controller: VideoViewController(
+                     rtcEngine: _callService.engine,
+                     canvas: const VideoCanvas(uid: 0), 
+                   ),
+                 ),
+               ),
+             ),
+           )
+      ],
+    );
+  }
+
+  Widget _buildVideoGrid() {
+    List<int> uids = _callService.remoteUids.toList();
+
+    if (uids.isEmpty) {
+      return const Center(child: Text("Waiting for others to join...", style: TextStyle(color: Colors.white)));
+    }
+
+    if (uids.length == 1) {
+      return AgoraVideoView(
+        controller: VideoViewController.remote(
+          rtcEngine: _callService.engine,
+          canvas: VideoCanvas(uid: uids[0]),
+          connection: RtcConnection(channelId: _currentChannel),
+        ),
+      );
+    }
+
+    return GridView.builder(
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: uids.length > 2 ? 2 : 1,
+        childAspectRatio: uids.length > 2 ? 0.8 : 1.5,
+      ),
+      itemCount: uids.length,
+      itemBuilder: (context, index) {
+        return Container(
+          margin: const EdgeInsets.all(2),
+          color: Colors.black,
+          child: AgoraVideoView(
+            controller: VideoViewController.remote(
+              rtcEngine: _callService.engine,
+              canvas: VideoCanvas(uid: uids[index]),
+              connection: RtcConnection(channelId: _currentChannel),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPulsingAvatar() {
+    final bool hasValidAvatar = widget.remoteAvatar != null && widget.remoteAvatar!.isNotEmpty;
+    Widget avatar = CircleAvatar(
+      radius: 65,
+      backgroundColor: Colors.white24,
+      backgroundImage: hasValidAvatar ? NetworkImage(widget.remoteAvatar!) : null,
+      child: !hasValidAvatar ? Text(widget.remoteName.isNotEmpty ? widget.remoteName[0].toUpperCase() : "?", style: const TextStyle(fontSize: 48, color: Colors.white)) : null,
+    );
+    if (_isConnected) return avatar;
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        ScaleTransition(
+          scale: Tween(begin: 1.0, end: 1.3).animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut)),
+          child: Container(width: 130, height: 130, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withOpacity(0.1))),
+        ),
+        avatar,
+      ],
+    );
+  }
+
+  Widget _buildActionCircle(IconData icon, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle, boxShadow: [BoxShadow(color: color.withOpacity(0.5), blurRadius: 15)]),
+        child: Icon(icon, color: Colors.white, size: 36),
+      ),
+    );
+  }
+
+  Widget _buildControlIcon({required IconData icon, required String label, required bool isActive}) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: isActive ? Colors.white : Colors.white.withOpacity(0.1),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Icon(icon, color: isActive ? Colors.black : Colors.white, size: 28),
+        ),
+        const SizedBox(height: 10),
+        Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.white60, fontSize: 14)),
+      ],
+    );
+  }
+
+  Widget _buildControlButton({required IconData icon, required String label, required bool isActive, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: _buildControlIcon(icon: icon, label: label, isActive: isActive),
+    );
+  }
+
+  Widget _buildAudioRouteMenu() {
+    bool isDesktopOrWeb = kIsWeb;
+    if (!kIsWeb) {
+      isDesktopOrWeb = defaultTargetPlatform == TargetPlatform.windows || 
+                       defaultTargetPlatform == TargetPlatform.linux || 
+                       defaultTargetPlatform == TargetPlatform.macOS;
+    }
+
+    IconData getIcon() {
+      if (_selectedAudioRoute == 'Speaker') return Icons.volume_up;
+      if (_selectedAudioRoute == 'Bluetooth') return Icons.bluetooth_audio;
+      return Icons.hearing;
+    }
+
+    if (isDesktopOrWeb) {
+      return _buildControlButton(
+        icon: Icons.speaker,
+        label: "Audio",
+        isActive: _selectedAudioRoute == 'Speaker',
+        onTap: _showDeviceSelectorDialog,
+      );
+    } else {
+      return _buildControlButton(
+        icon: getIcon(),
+        label: _selectedAudioRoute,
+        isActive: _selectedAudioRoute == 'Speaker',
+        onTap: () {
+          showModalBottomSheet(
+            context: context,
+            backgroundColor: const Color(0xFF2C2C2C),
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+            ),
+            builder: (context) {
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildAudioListItem('Speaker', Icons.volume_up),
+                      _buildAudioListItem('Earpiece', Icons.hearing),
+                      _buildAudioListItem('Bluetooth', Icons.bluetooth_audio),
+                    ],
+                  ),
+                ),
+              );
+            }
+          );
+        },
+      );
+    }
+  }
+
+  Widget _buildAudioListItem(String route, IconData icon) {
+    return ListTile(
+      dense: true, 
+      visualDensity: VisualDensity.compact,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 0),
+      leading: Icon(icon, color: Colors.white, size: 20),
+      title: Text(route, style: const TextStyle(color: Colors.white, fontSize: 13)),
+      onTap: () {
+        setState(() => _selectedAudioRoute = route);
+        _callService.setAudioRoute(route);
+        Navigator.pop(context);
+      }
+    );
+  }
+
+  Widget _buildSmallBtn(IconData icon, String label, VoidCallback onTap, {bool isActive = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: isActive ? Colors.white : Colors.white24, shape: BoxShape.circle),
+            child: Icon(icon, color: isActive ? Colors.black : Colors.white, size: 20),
+          ),
+          const SizedBox(height: 6),
+          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
