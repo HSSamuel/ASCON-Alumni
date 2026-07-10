@@ -1,8 +1,4 @@
 [build]
-  # 1. Create the env.txt file securely line-by-line using Netlify variables
-  # 2. Delete any cached flutter folder
-  # 3. Clone fresh Flutter SDK
-  # 4. Build the web app
   command = "echo \"API_URL=$API_URL\" > env.txt && echo \"AGORA_APP_ID=$AGORA_APP_ID\" >> env.txt && rm -rf flutter && git clone https://github.com/flutter/flutter.git -b stable --depth 1 && ./flutter/bin/flutter build web --release"
   
   publish = "build/web"
