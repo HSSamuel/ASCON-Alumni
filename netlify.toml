@@ -1,12 +1,11 @@
 [build]
-  # 1. Download Flutter stable
-  # 2. Build the web app using the newly downloaded Flutter engine
-  command = "git clone https://github.com/flutter/flutter.git -b stable --depth 1 && ./flutter/bin/flutter build web --release"
+  # 1. Create the env.txt file securely using the Netlify Environment Variable
+  # 2. Download Flutter
+  # 3. Build the web app
+  command = "echo \"$ENV_CONTENT\" > env.txt && git clone https://github.com/flutter/flutter.git -b stable --depth 1 && ./flutter/bin/flutter build web --release"
   
-  # Tell Netlify where the final files are generated
   publish = "build/web"
 
-# Fix the SPA routing / 404 errors
 [[redirects]]
   from = "/*"
   to = "/index.html"
