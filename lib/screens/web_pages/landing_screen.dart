@@ -78,7 +78,7 @@ class LandingScreen extends StatelessWidget {
                                       style: TextStyle(fontSize: isDesktop ? 56 : 40, height: 1.1, fontWeight: FontWeight.w900, color: Colors.black87)
                                     ),
                                     const SizedBox(height: 20),
-                                    Text("Connect with fellow graduates, find mentorship opportunities, and stay updated with the latest from the Administrative Staff College of Nigeria.", 
+                                    Text("Connect with fellow graduates, find opportunities, and stay updated with the latest from the Administrative Staff College of Nigeria.", 
                                       textAlign: isDesktop ? TextAlign.left : TextAlign.center,
                                       style: const TextStyle(fontSize: 18, color: Colors.grey, height: 1.5)
                                     ),
