@@ -1,3 +1,7 @@
+[build]
+  command = "flutter build web --release"
+  publish = "build/web"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
