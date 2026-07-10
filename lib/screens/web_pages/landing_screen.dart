@@ -43,7 +43,7 @@ class LandingScreen extends StatelessWidget {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                       ),
                       onPressed: () => context.go('/login'),
-                      child: const Text("Web Login", style: TextStyle(fontWeight: FontWeight.bold)),
+                      child: const Text("Proceed", style: TextStyle(fontWeight: FontWeight.bold)),
                     )
                   ],
                 ),

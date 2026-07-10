@@ -1,8 +1,9 @@
 [build]
-  # 1. Create the env.txt file securely using the Netlify Environment Variable
-  # 2. Download Flutter
-  # 3. Build the web app
-  command = "echo \"$ENV_CONTENT\" > env.txt && git clone https://github.com/flutter/flutter.git -b stable --depth 1 && ./flutter/bin/flutter build web --release"
+  # 1. Create the env.txt file
+  # 2. Delete any cached flutter folder (rm -rf flutter)
+  # 3. Clone fresh Flutter SDK
+  # 4. Build the web app
+  command = "echo \"$ENV_CONTENT\" > env.txt && rm -rf flutter && git clone https://github.com/flutter/flutter.git -b stable --depth 1 && ./flutter/bin/flutter build web --release"
   
   publish = "build/web"
 
