@@ -1,5 +1,6 @@
 // lib/router.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // ✅ Added for kIsWeb check
 import 'package:go_router/go_router.dart';
 
 // Screens
@@ -20,7 +21,12 @@ import 'screens/call_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/event_detail_screen.dart';
 import 'screens/programme_detail_screen.dart';
-import 'screens/update_screen.dart'; // ✅ Imported Update Screen
+import 'screens/update_screen.dart'; 
+
+// ✅ Web Screens
+import 'screens/web_pages/landing_screen.dart';
+import 'screens/web_pages/verification_screen.dart';
+import 'screens/web_pages/reset_password_screen.dart';
 
 // Global Keys used for Context-less Navigation
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -32,14 +38,39 @@ final GlobalKey<NavigatorState> profileNavKey = GlobalKey<NavigatorState>();
 
 final GoRouter appRouter = GoRouter(
   navigatorKey: rootNavigatorKey,
-  initialLocation: '/',
+  // ✅ FIX: Web users start at the landing page; mobile users start at the splash screen
+  initialLocation: kIsWeb ? '/landing' : '/',
   routes: [
+    // ==========================================
+    // 🌐 WEB-SPECIFIC ROUTES
+    // ==========================================
+    GoRoute(
+      path: '/landing',
+      builder: (context, state) => const LandingScreen(),
+    ),
+    GoRoute(
+      path: '/verify/:id',
+      builder: (context, state) {
+        final id = state.pathParameters['id'] ?? '';
+        return VerificationScreen(id: id);
+      },
+    ),
+    GoRoute(
+      path: '/reset-password',
+      builder: (context, state) {
+        final token = state.uri.queryParameters['token'];
+        return ResetPasswordScreen(token: token);
+      },
+    ),
+
+    // ==========================================
+    // 📱 CORE APP ROUTES
+    // ==========================================
     GoRoute(
       path: '/',
       builder: (context, state) => const SplashScreen(),
     ),
     
-    // ✅ ADDED Route for Force Update 
     GoRoute(
       path: '/update',
       builder: (context, state) {
@@ -173,7 +204,6 @@ final GoRouter appRouter = GoRouter(
           remoteAvatar: args['remoteAvatar'],
           isIncoming: args['isIncoming'] ?? false,
           autoAccept: args['autoAccept'] ?? false,
-          // ✅ FIX 1: Passing the current user identity so it's not "Unknown"
           currentUserName: args['currentUserName'],     
           currentUserAvatar: args['currentUserAvatar'], 
         );
