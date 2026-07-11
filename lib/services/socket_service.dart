@@ -12,6 +12,9 @@ class SocketService with WidgetsBindingObserver {
   String? _currentUserId;
   String? _connectedUserId; 
 
+  // ✅ FIX: Timer to debounce socket disconnects and stabilize presence
+  Timer? _offlineGracePeriodTimer;
+
   final _userStatusController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get userStatusStream => _userStatusController.stream;
 
@@ -31,6 +34,14 @@ class SocketService with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // ✅ FIX: If the user returns within the grace period, cancel the disconnect!
+      if (_offlineGracePeriodTimer != null && _offlineGracePeriodTimer!.isActive) {
+        _offlineGracePeriodTimer!.cancel();
+        _offlineGracePeriodTimer = null;
+        announcePresence(); 
+        return; 
+      }
+
       _storage.read(key: "auth_token").then((token) {
         if (token != null) {
           if (socket == null) {
@@ -43,9 +54,14 @@ class SocketService with WidgetsBindingObserver {
         }
       });
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
-      if (socket != null && socket!.connected) {
-         socket!.disconnect();
-      }
+      // ✅ FIX: Start a 4-second Grace Period before killing the socket
+      _offlineGracePeriodTimer?.cancel();
+      _offlineGracePeriodTimer = Timer(const Duration(seconds: 4), () {
+        if (socket != null && socket!.connected) {
+           socket!.disconnect();
+           debugPrint("Socket gracefully disconnected after background delay.");
+        }
+      });
     }
   }
 
@@ -182,7 +198,6 @@ class SocketService with WidgetsBindingObserver {
     }
   }
 
-  // ✅ FIX 5: Removed && socket!.connected so events queue and send instantly when app wakes up
   void initiateCall(String targetUserId, String channelName, Map<String, dynamic> callerData) {
     if (socket != null) {
       socket!.emit('initiate_call', {
@@ -238,6 +253,7 @@ class SocketService with WidgetsBindingObserver {
   }
 
   void disconnect() {
+    _offlineGracePeriodTimer?.cancel();
     if (socket != null) {
       socket!.disconnect();
       socket = null;
@@ -247,6 +263,7 @@ class SocketService with WidgetsBindingObserver {
 
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _offlineGracePeriodTimer?.cancel();
     _userStatusController.close();
     _callEventsController.close();
     _messageStatusController.close();

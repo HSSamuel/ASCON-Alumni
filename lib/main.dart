@@ -57,17 +57,15 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 
   if (type == 'chat_message') {
+    // FIX: Using SharedPreferences in the Background Isolate
+    // Prevents fatal File Lock Exceptions (HiveError)
     try {
-      await Hive.initFlutter();
-      // ✅ FIX: Check if box is already open to prevent isolate collision crashes
-      var chatBox = Hive.isBoxOpen('ascon_cache') 
-          ? Hive.box('ascon_cache') 
-          : await Hive.openBox('ascon_cache');
-      List<dynamic> pendingChats = chatBox.get('pending_background_chats', defaultValue: []);
-      pendingChats.add(message.data);
-      await chatBox.put('pending_background_chats', pendingChats);
+      final prefs = await SharedPreferences.getInstance();
+      List<String> pendingChatsJson = prefs.getStringList('pending_background_chats') ?? [];
+      pendingChatsJson.add(jsonEncode(message.data));
+      await prefs.setStringList('pending_background_chats', pendingChatsJson);
     } catch(e) {
-      debugPrint("Pre-emptive Hive cache error: $e");
+      debugPrint("Pre-emptive SharedPreferences cache error: $e");
     }
 
     final String? messageId = message.data['messageId'];
@@ -75,11 +73,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       const storage = FlutterSecureStorage(aOptions: AndroidOptions(encryptedSharedPreferences: true));
       String? token = await storage.read(key: 'auth_token');
       
-      if (token == null) {
-        final prefs = await SharedPreferences.getInstance();
-        token = prefs.getString('auth_token');
-      }
-
       if (token != null) {
         try {
           await http.put(
@@ -257,8 +250,6 @@ void main() async {
       debugPrint("Failed to cache background API URL: $e");
     }
     
-    // ✅ FIX: Prevent "Ghost Online" status. 
-    // Only initialize the socket if the user is explicitly authenticated.
     bool hasValidSession = await AuthService().isSessionValid();
     if (hasValidSession) {
       SocketService().initSocket();
@@ -329,6 +320,9 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   StreamSubscription? _callSubscription;
   static bool _isNavigatingToCall = false;
+  
+  // FIX: Timer to debounce socket disconnects and stabilize presence
+  Timer? _offlineGracePeriodTimer; 
 
   @override
   void initState() {
@@ -345,7 +339,33 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this); 
     _callSubscription?.cancel();
+    _offlineGracePeriodTimer?.cancel();
     super.dispose();
+  }
+
+  // FIX: Helper function to ingest SharedPrefs data into Hive 
+  Future<void> _ingestBackgroundMessages() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      List<String> pendingChatsJson = prefs.getStringList('pending_background_chats') ?? [];
+      
+      if (pendingChatsJson.isNotEmpty) {
+        var chatBox = Hive.isBoxOpen('ascon_cache') 
+            ? Hive.box('ascon_cache') 
+            : await Hive.openBox('ascon_cache');
+            
+        List<dynamic> existingChats = chatBox.get('pending_background_chats', defaultValue: []);
+        
+        for (String jsonStr in pendingChatsJson) {
+          existingChats.add(jsonDecode(jsonStr));
+        }
+        
+        await chatBox.put('pending_background_chats', existingChats);
+        await prefs.remove('pending_background_chats'); // Clear safely
+      }
+    } catch (e) {
+      debugPrint("Error ingesting background messages: $e");
+    }
   }
 
   Future<void> _checkActiveCallsOnColdStart() async {
@@ -375,12 +395,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
         if (_isNavigatingToCall) return; 
         _isNavigatingToCall = true;
-        Future.delayed(const Duration(seconds: 2), () => _isNavigatingToCall = false);
-
-        final userMap = await AuthService().getCachedUser();
-        final currentUserName = userMap?['fullName'] ?? "Alumni User";
-        final currentUserAvatar = userMap?['profilePicture'];
-
         appRouter.push('/call', extra: {
           'isGroupCall': data['isGroupCall'] == 'true' || data['isGroupCall'] == true,
           'isVideoCall': call['type'] == 1,
@@ -390,9 +404,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           'remoteAvatar': data['callerAvatar'] ?? call['avatar'] ?? "",
           'isIncoming': true,
           'autoAccept': true,
-          'currentUserName': currentUserName,
-          'currentUserAvatar': currentUserAvatar,
-        });
+        }).then((_) => _isNavigatingToCall = false);
       }
     } catch (e) {
       debugPrint("Cold start CallKit check failed: $e");
@@ -400,6 +412,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _triggerColdStartSync() async {
+    await _ingestBackgroundMessages();
+
     if (await AuthService().isSessionValid()) {
       await NotificationService().init();
       AuthService().performGlobalSilentSync();
@@ -410,26 +424,37 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
-    // ✅ INSTANT PRESENCE SYNC: Pre-emptively tell the backend we are leaving!
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached || state == AppLifecycleState.inactive || state == AppLifecycleState.hidden) {
-      try {
-        SocketService().socket?.emit('go_offline');
-        
-        // Give the OS 100ms to flush the buffer before we physically tear down the TCP socket
-        Future.delayed(const Duration(milliseconds: 100), () {
-          SocketService().disconnect(); 
-        });
-      } catch (e) {}
-    } 
-    else if (state == AppLifecycleState.resumed) {
-      // ✅ FIX: Guard socket connection upon resuming from background
-      AuthService().isSessionValid().then((isValid) {
-        if (isValid) {
-          SocketService().initSocket(); 
-          SocketService().socket?.emit('go_online'); // Tell backend we are back instantly
-          AuthService().performGlobalSilentSync();
+    // FIX: Only disconnect on actual background states to prevent thrashing
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      
+      // FIX: Start a 4-second Grace Period before killing the socket
+      _offlineGracePeriodTimer = Timer(const Duration(seconds: 4), () {
+        try {
+          SocketService().socket?.emit('go_offline');
+          
+          Future.delayed(const Duration(milliseconds: 100), () {
+            SocketService().disconnect(); 
+          });
+        } catch (e) {
+          debugPrint("Offline emit failed: $e");
         }
       });
+    } 
+    else if (state == AppLifecycleState.resumed) {
+      _ingestBackgroundMessages();
+
+      // FIX: If user returns within 4 seconds, cancel the disconnect
+      if (_offlineGracePeriodTimer != null && _offlineGracePeriodTimer!.isActive) {
+        _offlineGracePeriodTimer!.cancel();
+      } else {
+        AuthService().isSessionValid().then((isValid) {
+          if (isValid) {
+            SocketService().initSocket(); 
+            SocketService().socket?.emit('go_online'); 
+            AuthService().performGlobalSilentSync();
+          }
+        });
+      }
     }
   }
 
@@ -456,7 +481,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (data['type'] == 'incoming_call' || data['type'] == 'video_call') {
       if (_isNavigatingToCall) return; 
       _isNavigatingToCall = true;
-      Future.delayed(const Duration(seconds: 2), () => _isNavigatingToCall = false);
 
       final currentRoute = appRouter.routerDelegate.currentConfiguration.uri.toString();
       if (currentRoute.contains('/call')) return;
@@ -465,7 +489,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       final currentUserName = userMap?['fullName'] ?? "Alumni User";
       final currentUserAvatar = userMap?['profilePicture'];
 
-      // ✅ FIX: Added missing addPostFrameCallback to handle GoRouter async mounting states
       WidgetsBinding.instance.addPostFrameCallback((_) {
         appRouter.push('/call', extra: {
           'isGroupCall': data['isGroupCall'] == 'true' || data['isGroupCall'] == true,
@@ -477,12 +500,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           'isIncoming': true,
           'currentUserName': currentUserName,
           'currentUserAvatar': currentUserAvatar,
-        });
+        }).then((_) => _isNavigatingToCall = false);
       });
     } 
     else {
-      // ✅ FIX: Delegate ALL non-call routing to NotificationService
-      // This ensures the data is correctly wrapped inside `alumniData` before hitting the GoRouter!
       NotificationService().handleNavigation(data);
     }
   }
@@ -514,7 +535,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
           if (_isNavigatingToCall) return; 
           _isNavigatingToCall = true;
-          Future.delayed(const Duration(seconds: 2), () => _isNavigatingToCall = false);
 
           final currentRoute = appRouter.routerDelegate.currentConfiguration.uri.toString();
           if (currentRoute.contains('/call')) return;
@@ -534,7 +554,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             'autoAccept': true,
             'currentUserName': currentUserName,
             'currentUserAvatar': currentUserAvatar,
-          });
+          }).then((_) => _isNavigatingToCall = false);
           break;
           
         case Event.actionCallDecline:
@@ -592,9 +612,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           } else {
             if (_isNavigatingToCall) return; 
             _isNavigatingToCall = true;
-            Future.delayed(const Duration(seconds: 3), () => _isNavigatingToCall = false);
 
-            appRouter.push('/call', extra: callArgs);
+            appRouter.push('/call', extra: callArgs).then((_) => _isNavigatingToCall = false);
           }
         }
       }
