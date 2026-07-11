@@ -138,7 +138,11 @@ class _VerificationScreenState extends State<VerificationScreen> {
                   ),
                   
                   const SizedBox(height: 30),
-                  const Text("Administrative Staff College of Nigeria (ASCON)", style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
+const Text(
+  "Administrative Staff College of Nigeria (ASCON)", 
+  textAlign: TextAlign.center, // ✅ ADDED THIS LINE
+  style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
+),
                 ]
               ],
             ),
