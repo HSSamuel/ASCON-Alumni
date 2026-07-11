@@ -1,6 +1,6 @@
 // lib/router.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart'; // ✅ Added for kIsWeb check
+import 'package:flutter/foundation.dart'; 
 import 'package:go_router/go_router.dart';
 
 // Screens
@@ -38,8 +38,27 @@ final GlobalKey<NavigatorState> profileNavKey = GlobalKey<NavigatorState>();
 
 final GoRouter appRouter = GoRouter(
   navigatorKey: rootNavigatorKey,
-  // ✅ FIX: Web users start at the landing page; mobile users start at the splash screen
-  initialLocation: kIsWeb ? '/landing' : '/',
+  
+  // ✅ FIX 1: Revert to the standard root to prevent GoRouter from overriding direct URLs
+  initialLocation: '/',
+  
+  // ✅ FIX 2: Smart Redirect to catch old links that contain the "#" (e.g., #/verify/...)
+  redirect: (context, state) {
+    if (kIsWeb) {
+      // Grab the raw URL directly from the browser window
+      final String fragment = Uri.base.fragment; 
+      
+      // If the URL contains a legacy hash route (like /verify/... or /reset-password?...)
+      if (fragment.startsWith('/')) {
+        // Only redirect if the router is trying to stick us on the home/landing page
+        if (state.uri.path == '/' || state.uri.path == '/landing') {
+          return fragment; // Send them to the actual route hidden inside the hash!
+        }
+      }
+    }
+    return null; // Normal routing
+  },
+
   routes: [
     // ==========================================
     // 🌐 WEB-SPECIFIC ROUTES
@@ -68,7 +87,8 @@ final GoRouter appRouter = GoRouter(
     // ==========================================
     GoRoute(
       path: '/',
-      builder: (context, state) => const SplashScreen(),
+      // ✅ FIX 3: Conditionally render the Landing Page (Web) or Splash Screen (Mobile) directly on the root!
+      builder: (context, state) => kIsWeb ? const LandingScreen() : const SplashScreen(),
     ),
     
     GoRoute(

@@ -244,7 +244,7 @@ void main() async {
   await runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
-    usePathUrlStrategy()
+    usePathUrlStrategy();
     
     await dotenv.load(fileName: "env.txt");
     await Hive.initFlutter();
