@@ -1,8 +1,8 @@
-// Full file content: lib/main.dart
 import 'dart:async'; 
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; 
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart'; 
 import 'package:firebase_crashlytics/firebase_crashlytics.dart'; 
@@ -243,6 +243,8 @@ void main() async {
 
   await runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
+
+    usePathUrlStrategy()
     
     await dotenv.load(fileName: "env.txt");
     await Hive.initFlutter();
