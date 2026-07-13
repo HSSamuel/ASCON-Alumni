@@ -58,7 +58,7 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          "ASCON Connect",
+                          "ASCON Alumni",
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                         // ✅ Dynamically show PWA instructions for iOS, and App info for Android
