@@ -13,6 +13,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart'; 
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'widgets/web_download_banner.dart';
 import 'package:http/http.dart' as http; 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart'; 
 import 'package:shared_preferences/shared_preferences.dart'; 
@@ -739,7 +740,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           darkTheme: AppTheme.darkTheme,
           themeMode: currentMode,
           builder: (context, child) {
-            return child ?? const SizedBox.shrink();
+            return WebDownloadBanner(
+              child: child ?? const SizedBox.shrink(),
+            );
           },
         );
       },

@@ -23,7 +23,7 @@ class PostCard extends ConsumerWidget {
   const PostCard({super.key, required this.post, required this.isAdmin, this.myId});
 
   void _viewProfile(BuildContext context, Map<String, dynamic> user) {
-    final userId = user['_id'] ?? user['userId'] ?? user['id'];
+    final userId = user['userId'] ?? user['_id'] ?? user['id'];
     if (userId == null) return;
     
     final alumniData = {

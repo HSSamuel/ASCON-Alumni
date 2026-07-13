@@ -12,7 +12,10 @@ class SocketService with WidgetsBindingObserver {
   String? _currentUserId;
   String? _connectedUserId; 
 
-  // ✅ FIX: Timer to debounce socket disconnects and stabilize presence
+  // ✅ ADDED THE MISSING GETTER HERE
+  String? get currentUserId => _currentUserId; 
+
+  // Timer to debounce socket disconnects and stabilize presence
   Timer? _offlineGracePeriodTimer;
 
   final _userStatusController = StreamController<Map<String, dynamic>>.broadcast();
@@ -34,12 +37,11 @@ class SocketService with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // ✅ FIX: If the user returns within the grace period, cancel the disconnect!
       if (_offlineGracePeriodTimer != null && _offlineGracePeriodTimer!.isActive) {
         _offlineGracePeriodTimer!.cancel();
         _offlineGracePeriodTimer = null;
-        announcePresence(); 
-        return; 
+        announcePresence();
+        return;
       }
 
       _storage.read(key: "auth_token").then((token) {
@@ -54,12 +56,10 @@ class SocketService with WidgetsBindingObserver {
         }
       });
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
-      // ✅ FIX: Start a 4-second Grace Period before killing the socket
       _offlineGracePeriodTimer?.cancel();
       _offlineGracePeriodTimer = Timer(const Duration(seconds: 4), () {
         if (socket != null && socket!.connected) {
            socket!.disconnect();
-           debugPrint("Socket gracefully disconnected after background delay.");
         }
       });
     }
@@ -99,9 +99,8 @@ class SocketService with WidgetsBindingObserver {
       }
 
       socket = IO.io(socketUrl, <String, dynamic>{
-        'transports': ['websocket', 'polling'], 
+        'transports': ['websocket'], 
         'autoConnect': false,
-        'timeout': 20000, 
         'reconnection': true,
         'reconnectionDelay': AppConfig.socketReconnectionDelayMs,
         'auth': {'token': token},

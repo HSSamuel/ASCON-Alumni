@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 
 // Screens
-import 'screens/splash_screen.dart';
 import 'screens/alumni_detail_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart'; 
@@ -28,6 +27,9 @@ import 'screens/web_pages/landing_screen.dart';
 import 'screens/web_pages/verification_screen.dart';
 import 'screens/web_pages/reset_password_screen.dart';
 
+// Services
+import 'services/auth_service.dart';
+
 // Global Keys used for Context-less Navigation
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 final GlobalKey<NavigatorState> homeNavKey = GlobalKey<NavigatorState>();
@@ -39,24 +41,18 @@ final GlobalKey<NavigatorState> profileNavKey = GlobalKey<NavigatorState>();
 final GoRouter appRouter = GoRouter(
   navigatorKey: rootNavigatorKey,
   
-  // ✅ FIX 1: Revert to the standard root to prevent GoRouter from overriding direct URLs
   initialLocation: '/',
   
-  // ✅ FIX 2: Smart Redirect to catch old links that contain the "#" (e.g., #/verify/...)
   redirect: (context, state) {
     if (kIsWeb) {
-      // Grab the raw URL directly from the browser window
       final String fragment = Uri.base.fragment; 
-      
-      // If the URL contains a legacy hash route (like /verify/... or /reset-password?...)
       if (fragment.startsWith('/')) {
-        // Only redirect if the router is trying to stick us on the home/landing page
         if (state.uri.path == '/' || state.uri.path == '/landing') {
-          return fragment; // Send them to the actual route hidden inside the hash!
+          return fragment; 
         }
       }
     }
-    return null; // Normal routing
+    return null; 
   },
 
   routes: [
@@ -87,8 +83,35 @@ final GoRouter appRouter = GoRouter(
     // ==========================================
     GoRoute(
       path: '/',
-      // ✅ FIX 3: Conditionally render the Landing Page (Web) or Splash Screen (Mobile) directly on the root!
-      builder: (context, state) => kIsWeb ? const LandingScreen() : const SplashScreen(),
+      builder: (context, state) {
+        // 1. Web always goes to Landing
+        if (kIsWeb) return const LandingScreen();
+
+        // 2. Mobile executes an invisible, lightning-fast session check 
+        // to seamlessly route, removing the need for a Splash Screen entirely!
+        return FutureBuilder<bool>(
+          future: AuthService().isSessionValid(),
+          builder: (context, snapshot) {
+            // Show a blank screen matching the theme while checking (takes milliseconds)
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return Scaffold(backgroundColor: Theme.of(context).scaffoldBackgroundColor);
+            }
+            
+            final isLoggedIn = snapshot.data == true;
+            
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (isLoggedIn) {
+                context.go('/home');
+              } else {
+                // Route to permissions which will then forward to login
+                context.go('/notification_permission', extra: '/login');
+              }
+            });
+
+            return Scaffold(backgroundColor: Theme.of(context).scaffoldBackgroundColor);
+          },
+        );
+      },
     ),
     
     GoRoute(

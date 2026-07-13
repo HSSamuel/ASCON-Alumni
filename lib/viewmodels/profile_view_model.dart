@@ -54,7 +54,6 @@ class ProfileNotifier extends StateNotifier<ProfileState> {
   @override
   void dispose() {
     _presenceTimer?.cancel();
-    // ✅ FIX: The signatures now match perfectly for socket.off()
     SocketService().socket?.off('user_status_result', _handleDirectPresenceUpdate);
     SocketService().socket?.off('user_status_update', _handleDirectPresenceUpdate);
     super.dispose();
@@ -67,7 +66,6 @@ class ProfileNotifier extends StateNotifier<ProfileState> {
       state = state.copyWith(isLoading: true);
     }
 
-    // 1. MILLISECOND 0: Check Local Cache First 
     if (!isRefresh && !showSkeleton) {
       final String? cachedProfileStr = _cacheBox.get(cacheKey);
       if (cachedProfileStr != null) {
@@ -93,34 +91,51 @@ class ProfileNotifier extends StateNotifier<ProfileState> {
       }
     }
 
-    // 2. BACKGROUND NETWORK FETCH 
     try {
       final profile = await _dataService.fetchProfile();
       
+      // ✅ FIX: Instantly exit if the user closed the screen while loading
+      if (!mounted) return; 
+      
       if (profile != null) {
-        final isOnline = profile['isOnline'] == true;
-        final lastSeen = profile['lastSeen']?.toString();
+        bool isOnline = profile['isOnline'] == true;
+        String? lastSeen = profile['lastSeen']?.toString();
         final percent = _calculateCompletion(profile);
 
-        // 3. OVERWRITE CACHE WITH FRESH DATA
         await _cacheBox.put(cacheKey, jsonEncode(profile));
 
-        // 4. SILENTLY UPDATE UI
-        if (mounted) {
-          state = state.copyWith(
-            userProfile: profile,
-            isLoading: false,
-            isOnline: isOnline,
-            lastSeen: lastSeen,
-            completionPercent: percent
-          );
+        // 🛡️ THE "SELF-PRESENCE" PARADOX FIX 🛡️
+        // ✅ FIX 1: Check userId before _id so it properly matches Auth ID
+        final targetUserId = profile['userId'] ?? profile['_id'];
+        final myId = SocketService().currentUserId;
+
+        if (myId != null && targetUserId == myId) {
+          // If it's MY profile, ignore the database. My physical connection is the source of truth.
+          final isPhysicallyConnected = SocketService().socket?.connected == true;
+          isOnline = isPhysicallyConnected;
+          // ✅ FIX 2: Generate valid ISO date string instead of 'Just now' to prevent parsing crash
+          lastSeen = isPhysicallyConnected ? null : DateTime.now().toIso8601String();
+        } else {
+          // The standard Stale Data Guard for checking OTHER users
+          if (state.isOnline && !isOnline) {
+            isOnline = true;
+            lastSeen = null;
+          }
         }
+
+        state = state.copyWith(
+          userProfile: profile,
+          isLoading: false,
+          isOnline: isOnline,
+          lastSeen: lastSeen,
+          completionPercent: percent
+        );
         
         if (profile['_id'] != null) {
           _listenToSocket(profile['_id']);
         }
       } else {
-        if (mounted) state = state.copyWith(isLoading: false);
+        state = state.copyWith(isLoading: false);
       }
     } catch (e) {
       debugPrint("Network fetch failed, relying on cache: $e");
@@ -128,23 +143,35 @@ class ProfileNotifier extends StateNotifier<ProfileState> {
     }
   }
 
-  // ✅ FIX: Removed the 'userId' parameter so the signature is exactly `void Function(dynamic)`
   void _handleDirectPresenceUpdate(dynamic data) {
     if (!mounted || data == null) return;
     
-    // Safely extract the current user's ID from our state to verify the socket event is for them
-    final targetUserId = state.userProfile?['_id'] ?? state.userProfile?['userId'];
+    // ✅ FIX 1: Check userId before _id
+    final targetUserId = state.userProfile?['userId'] ?? state.userProfile?['_id'];
     
     if (targetUserId != null && data['userId'] == targetUserId) {
+      bool incomingOnline = data['isOnline'] == true;
+      String? incomingLastSeen = incomingOnline ? null : data['lastSeen']?.toString();
+
+      // 🛡️ THE "SELF-PRESENCE" PARADOX FIX (Socket Broadcasts) 🛡️
+      final myId = SocketService().currentUserId;
+      if (targetUserId == myId) {
+        final isPhysicallyConnected = SocketService().socket?.connected == true;
+        incomingOnline = isPhysicallyConnected;
+        // ✅ FIX 2: Generate valid ISO date string
+        incomingLastSeen = isPhysicallyConnected ? null : DateTime.now().toIso8601String();
+      }
+
       state = state.copyWith(
-        isOnline: data['isOnline'] == true,
-        lastSeen: data['isOnline'] == true ? null : data['lastSeen']?.toString()
+        isOnline: incomingOnline,
+        lastSeen: incomingLastSeen
       );
     }
   }
 
   void refreshPresence() {
-    final targetUserId = state.userProfile?['_id'] ?? state.userProfile?['userId'];
+    // ✅ FIX 1: Check userId before _id
+    final targetUserId = state.userProfile?['userId'] ?? state.userProfile?['_id'];
     if (targetUserId != null) {
       _requestPresence(targetUserId);
     }
@@ -162,19 +189,24 @@ class ProfileNotifier extends StateNotifier<ProfileState> {
   void _listenToSocket(String? userId) {
     if (userId == null) return;
 
-    // 1. Request instantly
-    _requestPresence(userId);
+    // ✅ FIX: Remove old listeners to prevent multi-firing on pull-to-refresh
+    SocketService().socket?.off('user_status_result', _handleDirectPresenceUpdate);
+    SocketService().socket?.off('user_status_update', _handleDirectPresenceUpdate);
 
-    // 2. Setup continuous polling every 10 seconds to guarantee accuracy
-    _presenceTimer?.cancel();
-    _presenceTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    final myId = SocketService().currentUserId;
+
+    // ✅ FIX: Only start the 10-second spam timer if we are looking at SOMEONE ELSE.
+    if (userId != myId) {
       _requestPresence(userId);
-    });
+      _presenceTimer?.cancel();
+      _presenceTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+        _requestPresence(userId);
+      });
+    } else {
+      // If it is ME, kill the timer entirely. The server no longer gets to tell me if I am online!
+      _presenceTimer?.cancel();
+    }
 
-    // 3. Listen to the wrapper stream
-    SocketService().userStatusStream.listen(_handleDirectPresenceUpdate);
-
-    // 4. Aggressively bind raw socket listeners to bypass any stream delays
     SocketService().socket?.on('user_status_result', _handleDirectPresenceUpdate);
     SocketService().socket?.on('user_status_update', _handleDirectPresenceUpdate);
   }
