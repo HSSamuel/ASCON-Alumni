@@ -306,22 +306,27 @@ class AuthService {
       );
 
       if (result.statusCode == 200) {
-        final body = jsonDecode(result.body);
-        final newToken = body['token'];
+  final body = jsonDecode(result.body);
+  final newToken = body['token'];
+  final newRefreshToken = body['refreshToken']; // Add this
 
-        if (newToken != null && newToken.isNotEmpty) {
-          _tokenCache = newToken;
-          await _secureStorage.write(key: 'auth_token', value: newToken);
-          
-          // ✅ UPDATE THE BACKGROUND TOKEN ALONGSIDE THE MAIN SECURE TOKEN
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('bg_auth_token', newToken);
+  if (newToken != null && newToken.isNotEmpty) {
+    _tokenCache = newToken;
+    await _secureStorage.write(key: 'auth_token', value: newToken);
+    
+    // ✅ Add this to save the newly rotated refresh token
+    if (newRefreshToken != null) {
+      await _secureStorage.write(key: 'refresh_token', value: newRefreshToken);
+    }
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('bg_auth_token', newToken);
 
-          _api.setAuthToken(newToken);
-          _refreshCompleter?.complete(newToken);
-          return newToken;
-        }
-      } 
+    _api.setAuthToken(newToken);
+    _refreshCompleter?.complete(newToken);
+    return newToken;
+  }
+}
       else if (result.statusCode == 401 || result.statusCode == 403 || result.statusCode == 400) {
         
         bool isGenuineRejection = false;
@@ -520,7 +525,9 @@ class AuthService {
     } catch (_) {}
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear(); // ✅ This also safely drops `bg_auth_token`
+    await prefs.remove('bg_auth_token');
+    await prefs.remove('user_name');
+    await prefs.remove('alumni_id');
     _api.clearAuthToken();
 
     if (kIsWeb) await Future.delayed(const Duration(milliseconds: 200));
