@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'dart:js' as js;
+
 import '../router.dart'; 
 
 class WebDownloadBanner extends StatefulWidget {
@@ -30,12 +31,11 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
   }
 
   void _showManualInstructions() {
-    // ✅ FIX: Retrieve the active Navigator context to safely open the dialog
     final navigatorContext = rootNavigatorKey.currentContext;
     if (navigatorContext == null) return;
 
     showDialog(
-      context: navigatorContext, // <--- Using the safe context here
+      context: navigatorContext, 
       builder: (c) => AlertDialog(
         title: const Text("Install Web App", style: TextStyle(fontWeight: FontWeight.bold)),
         content: Text(
@@ -82,6 +82,7 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                   const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min, 
                       children: [
                         Text(
                           "ASCON Alumni",
@@ -96,22 +97,30 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                   ),
                   const SizedBox(width: 8),
                   
-                  ElevatedButton(
-                    onPressed: _triggerInstall,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: const Color(0xFF1B5E3A),
+                  // ✅ FIX: Replaced ElevatedButton with GestureDetector to bypass Semantic assertions
+                  GestureDetector(
+                    onTap: _triggerInstall,
+                    child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      minimumSize: Size.zero,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        "INSTALL", 
+                        style: TextStyle(color: Color(0xFF1B5E3A), fontWeight: FontWeight.bold, fontSize: 13)
+                      ),
                     ),
-                    child: const Text("INSTALL", style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
+                  const SizedBox(width: 8),
                     
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white70, size: 20),
-                    onPressed: () => setState(() => _isVisible = false),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                  // ✅ FIX: Replaced IconButton with GestureDetector to bypass Semantic assertions
+                  GestureDetector(
+                    onTap: () => setState(() => _isVisible = false),
+                    child: const Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Icon(Icons.close, color: Colors.white70, size: 20),
+                    ),
                   ),
                 ],
               ),

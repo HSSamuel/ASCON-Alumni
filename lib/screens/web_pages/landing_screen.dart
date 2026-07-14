@@ -12,12 +12,11 @@ class LandingScreen extends StatelessWidget {
     }
   }
 
-// ✅ FIX: Added context.mounted check
   Future<void> _handleProceed(BuildContext context) async {
     final prefs = await SharedPreferences.getInstance();
     final hasSeen = prefs.getBool('has_seen_notification_prompt') ?? false;
     
-    if (!context.mounted) return; // Prevents context crashes
+    if (!context.mounted) return;
 
     if (!hasSeen) {
       context.go('/notification_permission', extra: '/login');
@@ -83,11 +82,23 @@ class LandingScreen extends StatelessWidget {
                             bool isDesktop = constraints.maxWidth > 800;
                             
                             Widget textContent = Column(
+                              mainAxisSize: MainAxisSize.min, 
                               crossAxisAlignment: isDesktop ? CrossAxisAlignment.start : CrossAxisAlignment.center,
                               children: [
-                                Text("Your ASCON\nNetwork,\nAnywhere.", 
+                                // ✅ FIX: Used Text.rich to make only "ASCON" green
+                                Text.rich(
+                                  const TextSpan(
+                                    children: [
+                                      TextSpan(text: "Your "),
+                                      TextSpan(
+                                        text: "ASCON\n", 
+                                        style: TextStyle(color: Color(0xFF1B5E3A)) // Green color applied here
+                                      ),
+                                      TextSpan(text: "Network,\nAnywhere."),
+                                    ],
+                                  ),
                                   textAlign: isDesktop ? TextAlign.left : TextAlign.center,
-                                  style: TextStyle(fontSize: isDesktop ? 56 : 40, height: 1.1, fontWeight: FontWeight.w900, color: Colors.black87)
+                                  style: TextStyle(fontSize: isDesktop ? 56 : 40, height: 1.1, fontWeight: FontWeight.w900, color: Colors.black87),
                                 ),
                                 const SizedBox(height: 20),
                                 Text("Connect with fellow graduates, find opportunities, and stay updated with the latest from the Administrative Staff College of Nigeria.", 
@@ -99,7 +110,6 @@ class LandingScreen extends StatelessWidget {
                                   spacing: 16, runSpacing: 16,
                                   alignment: isDesktop ? WrapAlignment.start : WrapAlignment.center,
                                   children: [
-                                    // ✅ FIX: Removed the PWA Install Button. Maintained App stores.
                                     _storeButton(Icons.android, "GET IT ON", "Google Play", () => _launchUrl("https://play.google.com/store/apps/details?id=com.ascon.app")),
                                     _storeButton(Icons.apple, "Download on the", "App Store", () => _launchUrl("https://apps.apple.com/app/idYOUR_APP_ID")),
                                   ],
@@ -186,6 +196,7 @@ class LandingScreen extends StatelessWidget {
             const SizedBox(width: 12),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min, 
               children: [
                 Text(subtitle, style: const TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
                 Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, height: 1.1)),
