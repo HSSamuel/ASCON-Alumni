@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; 
 import 'package:go_router/go_router.dart'; 
+import 'package:package_info_plus/package_info_plus.dart'; // ✅ Added import
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
@@ -26,7 +27,7 @@ class AboutScreen extends StatelessWidget {
       canPop: false, 
       onPopInvoked: (didPop) {
         if (didPop) return;
-        context.go('/home'); // Go to Home Tab
+        context.go('/home'); // Go to Home Tab[cite: 6]
       },
       child: Scaffold(
         backgroundColor: scaffoldBg, 
@@ -311,9 +312,25 @@ class AboutScreen extends StatelessWidget {
 
                     const SizedBox(height: 20),
                     
-                    Text(
-                      "ASCON Alumni v2.1.0",
-                      style: GoogleFonts.lato(color: Colors.grey[400], fontSize: 12),
+                    // ✅ FIX: Dynamic Version Display using package_info_plus
+                    FutureBuilder<PackageInfo>(
+                      future: PackageInfo.fromPlatform(),
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData) {
+                          return Text(
+                            "ASCON Alumni v...", 
+                            style: GoogleFonts.lato(color: Colors.grey[400], fontSize: 12),
+                          );
+                        }
+                        
+                        final String version = snapshot.data!.version;
+                        final String buildNumber = snapshot.data!.buildNumber;
+                        
+                        return Text(
+                          "ASCON Alumni v$version ($buildNumber)",
+                          style: GoogleFonts.lato(color: Colors.grey[400], fontSize: 12),
+                        );
+                      },
                     ),
                     const SizedBox(height: 40),
                   ],
@@ -418,7 +435,6 @@ class AboutScreen extends StatelessWidget {
           color: color.withOpacity(0.1),
           shape: BoxShape.circle,
         ),
-        // FaIcon will now accept the dynamic icon without throwing a type error
         child: FaIcon(icon, color: color, size: 22), 
       ),
     );
