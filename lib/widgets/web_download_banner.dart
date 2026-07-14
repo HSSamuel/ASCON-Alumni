@@ -84,7 +84,7 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          "ASCON Connect",
+                          "ASCON Alumni",
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                         Text(
