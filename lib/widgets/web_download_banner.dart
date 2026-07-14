@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'dart:js' as js;
+import '../router.dart'; 
 
 class WebDownloadBanner extends StatefulWidget {
   final Widget child;
@@ -13,28 +14,48 @@ class WebDownloadBanner extends StatefulWidget {
 class _WebDownloadBannerState extends State<WebDownloadBanner> {
   bool _isVisible = kIsWeb; 
 
-  Future<void> _launchStore() async {
-    final Uri url = Uri.parse('https://play.google.com/store/apps/details?id=com.ascon.app');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
+  void _triggerInstall() {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      _showManualInstructions();
     } else {
-      debugPrint("Could not launch $url");
+      try {
+        bool promptSuccessful = js.context.callMethod('promptPwaInstall');
+        if (!promptSuccessful) {
+          _showManualInstructions();
+        }
+      } catch (e) {
+        _showManualInstructions();
+      }
     }
+  }
+
+  void _showManualInstructions() {
+    // ✅ FIX: Retrieve the active Navigator context to safely open the dialog
+    final navigatorContext = rootNavigatorKey.currentContext;
+    if (navigatorContext == null) return;
+
+    showDialog(
+      context: navigatorContext, // <--- Using the safe context here
+      builder: (c) => AlertDialog(
+        title: const Text("Install Web App", style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Text(
+          defaultTargetPlatform == TargetPlatform.iOS 
+            ? "To install the app on your iPhone/iPad:\n\n1. Tap the Share button ⬆️ at the bottom of Safari.\n2. Scroll down and tap 'Add to Home Screen'."
+            : "To install the app:\n\nTap the browser menu (⋮) and select 'Install app' or click the install icon (🖥️⬇️) in your address bar."
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c), 
+            child: const Text("GOT IT", style: TextStyle(color: Color(0xFF1B5E3A), fontWeight: FontWeight.bold))
+          )
+        ],
+      )
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     if (!_isVisible) return widget.child;
-
-    final isAndroid = defaultTargetPlatform == TargetPlatform.android;
-    
-    // ✅ Emphasize PWA Instruction tailored to the target platform
-    String instructionText = "Install Web App: Click the install icon (🖥️⬇️) in your browser address bar.";
-    if (defaultTargetPlatform == TargetPlatform.iOS) {
-      instructionText = "Install Web App: Tap Share ⬆️ then 'Add to Home Screen'.";
-    } else if (isAndroid) {
-      instructionText = "Install Web App: Tap browser menu (⋮) then 'Install app', or get the Mobile App.";
-    }
 
     return Column(
       children: [
@@ -54,39 +75,37 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                       width: 40, 
                       height: 40, 
                       fit: BoxFit.cover, 
-                      errorBuilder: (c, e, s) => const Icon(Icons.android, color: Colors.white)
+                      errorBuilder: (c, e, s) => const Icon(Icons.web, color: Colors.white)
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
+                  const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          "ASCON Alumni Web App",
+                        Text(
+                          "ASCON Connect",
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                         Text(
-                          instructionText,
-                          style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          "Get the fast, lightweight web version.",
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 8),
                   
-                  // Keep Google Play for Android as an alternative to the PWA
-                  if (isAndroid)
-                    ElevatedButton(
-                      onPressed: _launchStore,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: const Color(0xFF1B5E3A),
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        minimumSize: Size.zero,
-                      ),
-                      child: const Text("APP", style: TextStyle(fontWeight: FontWeight.bold)),
+                  ElevatedButton(
+                    onPressed: _triggerInstall,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF1B5E3A),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      minimumSize: Size.zero,
                     ),
+                    child: const Text("INSTALL", style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
                     
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white70, size: 20),

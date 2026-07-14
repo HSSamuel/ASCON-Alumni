@@ -23,7 +23,7 @@ import 'screens/event_detail_screen.dart';
 import 'screens/programme_detail_screen.dart';
 import 'screens/update_screen.dart'; 
 
-// ✅ Web Screens
+// Web Screens
 import 'screens/web_pages/landing_screen.dart';
 import 'screens/web_pages/verification_screen.dart';
 import 'screens/web_pages/reset_password_screen.dart';
@@ -31,7 +31,6 @@ import 'screens/web_pages/reset_password_screen.dart';
 // Services
 import 'services/auth_service.dart';
 
-// Global Keys used for Context-less Navigation
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 final GlobalKey<NavigatorState> homeNavKey = GlobalKey<NavigatorState>();
 final GlobalKey<NavigatorState> chatNavKey = GlobalKey<NavigatorState>();
@@ -57,9 +56,6 @@ final GoRouter appRouter = GoRouter(
   },
 
   routes: [
-    // ==========================================
-    // 🌐 WEB-SPECIFIC ROUTES
-    // ==========================================
     GoRoute(
       path: '/landing',
       builder: (context, state) => const LandingScreen(),
@@ -79,9 +75,8 @@ final GoRouter appRouter = GoRouter(
       },
     ),
 
-    // ==========================================
-    // 📱 CORE APP ROUTES
-    // ==========================================
+    // ✅ FIX: Strict logic to route directly to Home if logged in,
+    // or through the Notification Permission exactly once before Login.
     GoRoute(
       path: '/',
       builder: (context, state) {
@@ -101,15 +96,10 @@ final GoRouter appRouter = GoRouter(
             final hasSeen = snapshot.data?['hasSeen'] == true;
             
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (kIsWeb && !isLoggedIn) {
-                // Web users shouldn't be bombarded with permissions before they login
+              if (isLoggedIn) {
+                context.go('/home');
+              } else if (kIsWeb) {
                 context.go('/landing');
-              } else if (isLoggedIn) {
-                if (!hasSeen) {
-                  context.go('/notification_permission', extra: '/home');
-                } else {
-                  context.go('/home');
-                }
               } else {
                 if (!hasSeen) {
                   context.go('/notification_permission', extra: '/login');
@@ -146,6 +136,7 @@ final GoRouter appRouter = GoRouter(
       builder: (context, state) => const LoginScreen(),
     ),
 
+    // ... [Keep the rest of your routes exactly as they are] ...
     GoRoute(
       path: '/notifications',
       parentNavigatorKey: rootNavigatorKey,

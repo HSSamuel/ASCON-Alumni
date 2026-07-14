@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LandingScreen extends StatelessWidget {
   const LandingScreen({super.key});
@@ -8,6 +9,20 @@ class LandingScreen extends StatelessWidget {
   Future<void> _launchUrl(String url) async {
     if (!await launchUrl(Uri.parse(url))) {
       debugPrint("Could not launch $url");
+    }
+  }
+
+// ✅ FIX: Added context.mounted check
+  Future<void> _handleProceed(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasSeen = prefs.getBool('has_seen_notification_prompt') ?? false;
+    
+    if (!context.mounted) return; // Prevents context crashes
+
+    if (!hasSeen) {
+      context.go('/notification_permission', extra: '/login');
+    } else {
+      context.go('/login');
     }
   }
 
@@ -42,7 +57,7 @@ class LandingScreen extends StatelessWidget {
                         elevation: 0,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                       ),
-                      onPressed: () => context.go('/login'),
+                      onPressed: () => _handleProceed(context),
                       child: const Text("Proceed", style: TextStyle(fontWeight: FontWeight.bold)),
                     )
                   ],
@@ -67,7 +82,6 @@ class LandingScreen extends StatelessWidget {
                           builder: (context, constraints) {
                             bool isDesktop = constraints.maxWidth > 800;
                             
-                            // ✅ FIX: Define the Text Content WITHOUT the Expanded wrapper
                             Widget textContent = Column(
                               crossAxisAlignment: isDesktop ? CrossAxisAlignment.start : CrossAxisAlignment.center,
                               children: [
@@ -85,21 +99,7 @@ class LandingScreen extends StatelessWidget {
                                   spacing: 16, runSpacing: 16,
                                   alignment: isDesktop ? WrapAlignment.start : WrapAlignment.center,
                                   children: [
-                                    _storeButton(Icons.web, "INSTALL", "Web App (PWA)", () {
-                                      showDialog(
-                                        context: context,
-                                        builder: (c) => AlertDialog(
-                                          title: const Text("Install Web App", style: TextStyle(fontWeight: FontWeight.bold)),
-                                          content: const Text("To install the ASCON Connect Web App to your device:\n\n• Mobile (Chrome): Tap menu (⋮) -> 'Install app'\n• iOS (Safari): Tap Share ⬆️ -> 'Add to Home Screen'\n• Desktop: Click the install icon (🖥️⬇️) located in the right corner of your URL address bar."),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () => Navigator.pop(c), 
-                                              child: const Text("OK", style: TextStyle(color: Color(0xFF1B5E3A), fontWeight: FontWeight.bold))
-                                            )
-                                          ],
-                                        )
-                                      );
-                                    }),
+                                    // ✅ FIX: Removed the PWA Install Button. Maintained App stores.
                                     _storeButton(Icons.android, "GET IT ON", "Google Play", () => _launchUrl("https://play.google.com/store/apps/details?id=com.ascon.app")),
                                     _storeButton(Icons.apple, "Download on the", "App Store", () => _launchUrl("https://apps.apple.com/app/idYOUR_APP_ID")),
                                   ],
@@ -107,7 +107,6 @@ class LandingScreen extends StatelessWidget {
                               ],
                             );
 
-                            // ✅ FIX: Define the Image Mockup separately
                             Widget imageContent = Container(
                               margin: EdgeInsets.only(top: isDesktop ? 0 : 40),
                               width: 250, height: 500,
@@ -119,19 +118,18 @@ class LandingScreen extends StatelessWidget {
                               ),
                             );
 
-                            // ✅ FIX: Apply Expanded ONLY when returning a Row, avoid it for Column
                             return isDesktop 
                                 ? Row(
                                     crossAxisAlignment: CrossAxisAlignment.center, 
                                     children: [
-                                      Expanded(child: textContent), // Allowed here because Row width is bounded
+                                      Expanded(child: textContent),
                                       const SizedBox(width: 60),
                                       imageContent
                                     ]
                                   )
                                 : Column(
                                     children: [
-                                      textContent, // Removed Expanded for unbounded vertical scroll view
+                                      textContent, 
                                       imageContent
                                     ]
                                   );

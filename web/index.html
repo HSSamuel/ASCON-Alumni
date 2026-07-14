@@ -12,13 +12,16 @@
       content="641176201184-3q7t2hp3kej2vvei41tpkivn7j206bf7.apps.googleusercontent.com"
     />
 
+    <!-- iOS Safari & PWA config -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="ASCON Alumni" />
+    <meta name="theme-color" content="#1B5E3A" />
 
     <link rel="apple-touch-icon" href="icons/Icon-192.png" />
     <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="manifest" href="manifest.json" />
 
     <title>ASCON Alumni</title>
 
@@ -32,7 +35,6 @@
     <meta name="twitter:title" content="ASCON Alumni" />
     <meta name="twitter:description" content="Connect, network, and grow with the official ASCON Alumni community." />
     <meta name="twitter:image" content="https://asconalumni.org/social-logo.png" />
-    <link rel="manifest" href="manifest.json" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -59,6 +61,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 
+    <!-- Console Cleaner Script -->
     <script>
       const origLog = console.log;
       const origDebug = console.debug;
@@ -81,6 +84,29 @@
       console.log = (...args) => cleanConsole(origLog, ...args);
       console.debug = (...args) => cleanConsole(origDebug, ...args);
       console.info = (...args) => cleanConsole(origInfo, ...args);
+    </script>
+
+    <!-- PWA 1-Click Install Script -->
+    <script>
+      let deferredPrompt;
+      window.addEventListener('beforeinstallprompt', (e) => {
+        // Prevent the default mini-infobar from appearing on mobile
+        e.preventDefault();
+        // Stash the event so it can be triggered later by our Flutter button
+        deferredPrompt = e;
+      });
+
+      function promptPwaInstall() {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          deferredPrompt.userChoice.then((choiceResult) => {
+            deferredPrompt = null;
+          });
+          return true;
+        } else {
+          return false; // Tells Flutter the prompt wasn't available
+        }
+      }
     </script>
 
     <script src="flutter_bootstrap.js" async></script>

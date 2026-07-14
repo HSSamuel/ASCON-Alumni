@@ -157,14 +157,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _navigateToHome() async {
     if (!mounted) return;
-    final prefs = await SharedPreferences.getInstance();
-    final hasSeen = prefs.getBool('has_seen_notification_prompt') ?? false;
-    
-    if (!hasSeen) {
-      context.go('/notification_permission', extra: '/home');
-    } else {
-      context.go('/home');
-    }
+    // We already checked permissions in router.dart before they reached here
+    context.go('/home');
   }
 
   Future<void> loginUser() async {

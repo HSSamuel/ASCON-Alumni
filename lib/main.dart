@@ -12,12 +12,11 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart'; 
 import 'package:hive_flutter/hive_flutter.dart';
-
-import 'widgets/web_download_banner.dart';
 import 'package:http/http.dart' as http; 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart'; 
 import 'package:shared_preferences/shared_preferences.dart'; 
 
+import 'widgets/web_download_banner.dart';
 import 'services/notification_service.dart';
 import 'services/socket_service.dart'; 
 import 'services/auth_service.dart'; 
@@ -58,8 +57,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 
   if (type == 'chat_message') {
-    // FIX: Using SharedPreferences in the Background Isolate
-    // Prevents fatal File Lock Exceptions (HiveError)
     try {
       final prefs = await SharedPreferences.getInstance();
       List<String> pendingChatsJson = prefs.getStringList('pending_background_chats') ?? [];
@@ -321,8 +318,6 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   StreamSubscription? _callSubscription;
   static bool _isNavigatingToCall = false;
-  
-  // FIX: Timer to debounce socket disconnects and stabilize presence
   Timer? _offlineGracePeriodTimer; 
 
   @override
@@ -344,7 +339,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  // FIX: Helper function to ingest SharedPrefs data into Hive 
   Future<void> _ingestBackgroundMessages() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -362,7 +356,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         }
         
         await chatBox.put('pending_background_chats', existingChats);
-        await prefs.remove('pending_background_chats'); // Clear safely
+        await prefs.remove('pending_background_chats'); 
       }
     } catch (e) {
       debugPrint("Error ingesting background messages: $e");
@@ -425,14 +419,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
-    // FIX: Only disconnect on actual background states to prevent thrashing
     if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
-      
-      // FIX: Start a 4-second Grace Period before killing the socket
       _offlineGracePeriodTimer = Timer(const Duration(seconds: 4), () {
         try {
           SocketService().socket?.emit('go_offline');
-          
           Future.delayed(const Duration(milliseconds: 100), () {
             SocketService().disconnect(); 
           });
@@ -444,7 +434,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     else if (state == AppLifecycleState.resumed) {
       _ingestBackgroundMessages();
 
-      // FIX: If user returns within 4 seconds, cancel the disconnect
       if (_offlineGracePeriodTimer != null && _offlineGracePeriodTimer!.isActive) {
         _offlineGracePeriodTimer!.cancel();
       } else {
@@ -464,7 +453,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (initialMessage != null) {
       _handleNotificationClick(initialMessage);
     }
-
     FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationClick);
   }
 
@@ -739,6 +727,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
           themeMode: currentMode,
+          // ⚠️ NOTE: The builder wraps the app, meaning the banner is above the Navigator.
           builder: (context, child) {
             return WebDownloadBanner(
               child: child ?? const SizedBox.shrink(),
