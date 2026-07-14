@@ -11,7 +11,6 @@ class WebDownloadBanner extends StatefulWidget {
 }
 
 class _WebDownloadBannerState extends State<WebDownloadBanner> {
-  // Only show the banner if the app is running on the web
   bool _isVisible = kIsWeb; 
 
   Future<void> _launchStore() async {
@@ -27,9 +26,15 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
   Widget build(BuildContext context) {
     if (!_isVisible) return widget.child;
 
-    // ✅ Detect if the user is on an Apple device (where custom install buttons are blocked)
-    final isAppleDevice = defaultTargetPlatform == TargetPlatform.iOS || 
-                          defaultTargetPlatform == TargetPlatform.macOS;
+    final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+    
+    // ✅ Emphasize PWA Instruction tailored to the target platform
+    String instructionText = "Install Web App: Click the install icon (🖥️⬇️) in your browser address bar.";
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      instructionText = "Install Web App: Tap Share ⬆️ then 'Add to Home Screen'.";
+    } else if (isAndroid) {
+      instructionText = "Install Web App: Tap browser menu (⋮) then 'Install app', or get the Mobile App.";
+    }
 
     return Column(
       children: [
@@ -58,14 +63,11 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          "ASCON Alumni",
+                          "ASCON Alumni Web App",
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                         ),
-                        // ✅ Dynamically show PWA instructions for iOS, and App info for Android
                         Text(
-                          isAppleDevice 
-                              ? "Install web app: Tap Share ⬆️ then 'Add to Home Screen'."
-                              : "Get the official mobile app for full call features.",
+                          instructionText,
                           style: const TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                       ],
@@ -73,8 +75,8 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                   ),
                   const SizedBox(width: 8),
                   
-                  // ✅ Only show the Google Play "GET" button if NOT on an Apple device
-                  if (!isAppleDevice)
+                  // Keep Google Play for Android as an alternative to the PWA
+                  if (isAndroid)
                     ElevatedButton(
                       onPressed: _launchStore,
                       style: ElevatedButton.styleFrom(
@@ -83,7 +85,7 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         minimumSize: Size.zero,
                       ),
-                      child: const Text("GET", style: TextStyle(fontWeight: FontWeight.bold)),
+                      child: const Text("APP", style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                     
                   IconButton(
@@ -97,7 +99,6 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
             ),
           ),
         ),
-        // The rest of your app renders below the banner
         Expanded(child: widget.child),
       ],
     );

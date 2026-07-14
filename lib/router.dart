@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; 
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Screens
 import 'screens/alumni_detail_screen.dart';
@@ -84,27 +85,37 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: '/',
       builder: (context, state) {
-        // 1. Web always goes to Landing
-        if (kIsWeb) return const LandingScreen();
-
-        // 2. Mobile executes an invisible, lightning-fast session check 
-        // to seamlessly route, removing the need for a Splash Screen entirely!
-        return FutureBuilder<bool>(
-          future: AuthService().isSessionValid(),
+        return FutureBuilder<Map<String, dynamic>>(
+          future: () async {
+            final sessionValid = await AuthService().isSessionValid();
+            final prefs = await SharedPreferences.getInstance();
+            final hasSeen = prefs.getBool('has_seen_notification_prompt') ?? false;
+            return {'sessionValid': sessionValid, 'hasSeen': hasSeen};
+          }(),
           builder: (context, snapshot) {
-            // Show a blank screen matching the theme while checking (takes milliseconds)
             if (snapshot.connectionState == ConnectionState.waiting) {
               return Scaffold(backgroundColor: Theme.of(context).scaffoldBackgroundColor);
             }
             
-            final isLoggedIn = snapshot.data == true;
+            final isLoggedIn = snapshot.data?['sessionValid'] == true;
+            final hasSeen = snapshot.data?['hasSeen'] == true;
             
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (isLoggedIn) {
-                context.go('/home');
+              if (kIsWeb && !isLoggedIn) {
+                // Web users shouldn't be bombarded with permissions before they login
+                context.go('/landing');
+              } else if (isLoggedIn) {
+                if (!hasSeen) {
+                  context.go('/notification_permission', extra: '/home');
+                } else {
+                  context.go('/home');
+                }
               } else {
-                // Route to permissions which will then forward to login
-                context.go('/notification_permission', extra: '/login');
+                if (!hasSeen) {
+                  context.go('/notification_permission', extra: '/login');
+                } else {
+                  context.go('/login');
+                }
               }
             });
 

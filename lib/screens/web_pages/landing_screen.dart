@@ -66,51 +66,75 @@ class LandingScreen extends StatelessWidget {
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             bool isDesktop = constraints.maxWidth > 800;
-                            List<Widget> children = [
-                              // Text Content
-                              Expanded(
-                                flex: isDesktop ? 1 : 0,
-                                child: Column(
-                                  crossAxisAlignment: isDesktop ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+                            
+                            // ✅ FIX: Define the Text Content WITHOUT the Expanded wrapper
+                            Widget textContent = Column(
+                              crossAxisAlignment: isDesktop ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+                              children: [
+                                Text("Your ASCON\nNetwork,\nAnywhere.", 
+                                  textAlign: isDesktop ? TextAlign.left : TextAlign.center,
+                                  style: TextStyle(fontSize: isDesktop ? 56 : 40, height: 1.1, fontWeight: FontWeight.w900, color: Colors.black87)
+                                ),
+                                const SizedBox(height: 20),
+                                Text("Connect with fellow graduates, find opportunities, and stay updated with the latest from the Administrative Staff College of Nigeria.", 
+                                  textAlign: isDesktop ? TextAlign.left : TextAlign.center,
+                                  style: const TextStyle(fontSize: 18, color: Colors.grey, height: 1.5)
+                                ),
+                                const SizedBox(height: 30),
+                                Wrap(
+                                  spacing: 16, runSpacing: 16,
+                                  alignment: isDesktop ? WrapAlignment.start : WrapAlignment.center,
                                   children: [
-                                    Text("Your ASCON\nNetwork,\nAnywhere.", 
-                                      textAlign: isDesktop ? TextAlign.left : TextAlign.center,
-                                      style: TextStyle(fontSize: isDesktop ? 56 : 40, height: 1.1, fontWeight: FontWeight.w900, color: Colors.black87)
-                                    ),
-                                    const SizedBox(height: 20),
-                                    Text("Connect with fellow graduates, find opportunities, and stay updated with the latest from the Administrative Staff College of Nigeria.", 
-                                      textAlign: isDesktop ? TextAlign.left : TextAlign.center,
-                                      style: const TextStyle(fontSize: 18, color: Colors.grey, height: 1.5)
-                                    ),
-                                    const SizedBox(height: 30),
-                                    Wrap(
-                                      spacing: 16, runSpacing: 16,
-                                      alignment: isDesktop ? WrapAlignment.start : WrapAlignment.center,
-                                      children: [
-                                        _storeButton(Icons.android, "GET IT ON", "Google Play", () => _launchUrl("https://play.google.com/store/apps/details?id=com.ascon.app")),
-                                        _storeButton(Icons.apple, "Download on the", "App Store", () => _launchUrl("https://apps.apple.com/app/idYOUR_APP_ID")),
-                                      ],
-                                    )
+                                    _storeButton(Icons.web, "INSTALL", "Web App (PWA)", () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (c) => AlertDialog(
+                                          title: const Text("Install Web App", style: TextStyle(fontWeight: FontWeight.bold)),
+                                          content: const Text("To install the ASCON Connect Web App to your device:\n\n• Mobile (Chrome): Tap menu (⋮) -> 'Install app'\n• iOS (Safari): Tap Share ⬆️ -> 'Add to Home Screen'\n• Desktop: Click the install icon (🖥️⬇️) located in the right corner of your URL address bar."),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(c), 
+                                              child: const Text("OK", style: TextStyle(color: Color(0xFF1B5E3A), fontWeight: FontWeight.bold))
+                                            )
+                                          ],
+                                        )
+                                      );
+                                    }),
+                                    _storeButton(Icons.android, "GET IT ON", "Google Play", () => _launchUrl("https://play.google.com/store/apps/details?id=com.ascon.app")),
+                                    _storeButton(Icons.apple, "Download on the", "App Store", () => _launchUrl("https://apps.apple.com/app/idYOUR_APP_ID")),
                                   ],
-                                ),
-                              ),
-                              if (isDesktop) const SizedBox(width: 60),
-                              // Image Mockup
-                              Container(
-                                margin: EdgeInsets.only(top: isDesktop ? 0 : 40),
-                                width: 250, height: 500,
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(40),
-                                  border: Border.all(color: Colors.black87, width: 8),
-                                  image: const DecorationImage(image: AssetImage('assets/app-screenshot.png'), fit: BoxFit.cover),
-                                ),
-                              )
-                            ];
+                                )
+                              ],
+                            );
 
+                            // ✅ FIX: Define the Image Mockup separately
+                            Widget imageContent = Container(
+                              margin: EdgeInsets.only(top: isDesktop ? 0 : 40),
+                              width: 250, height: 500,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[200],
+                                borderRadius: BorderRadius.circular(40),
+                                border: Border.all(color: Colors.black87, width: 8),
+                                image: const DecorationImage(image: AssetImage('assets/app-screenshot.png'), fit: BoxFit.cover),
+                              ),
+                            );
+
+                            // ✅ FIX: Apply Expanded ONLY when returning a Row, avoid it for Column
                             return isDesktop 
-                                ? Row(crossAxisAlignment: CrossAxisAlignment.center, children: children)
-                                : Column(children: children);
+                                ? Row(
+                                    crossAxisAlignment: CrossAxisAlignment.center, 
+                                    children: [
+                                      Expanded(child: textContent), // Allowed here because Row width is bounded
+                                      const SizedBox(width: 60),
+                                      imageContent
+                                    ]
+                                  )
+                                : Column(
+                                    children: [
+                                      textContent, // Removed Expanded for unbounded vertical scroll view
+                                      imageContent
+                                    ]
+                                  );
                           },
                         ),
                       ),
