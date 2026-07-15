@@ -86,18 +86,17 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                       children: [
                         Text(
                           "ASCON Alumni",
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), // ✅ Reduced to 13
                         ),
                         Text(
                           "Get the fast, lightweight web version.",
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                          style: TextStyle(color: Colors.white70, fontSize: 11), // ✅ Reduced to 11
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 8),
                   
-                  // ✅ FIX: Replaced ElevatedButton with GestureDetector to bypass Semantic assertions
                   GestureDetector(
                     onTap: _triggerInstall,
                     child: Container(
@@ -108,13 +107,12 @@ class _WebDownloadBannerState extends State<WebDownloadBanner> {
                       ),
                       child: const Text(
                         "INSTALL", 
-                        style: TextStyle(color: Color(0xFF1B5E3A), fontWeight: FontWeight.bold, fontSize: 13)
+                        style: TextStyle(color: Color(0xFF1B5E3A), fontWeight: FontWeight.bold, fontSize: 12) // ✅ Reduced to 12
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
                     
-                  // ✅ FIX: Replaced IconButton with GestureDetector to bypass Semantic assertions
                   GestureDetector(
                     onTap: () => setState(() => _isVisible = false),
                     child: const Padding(

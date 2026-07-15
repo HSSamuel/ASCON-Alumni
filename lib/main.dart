@@ -619,14 +619,19 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       barrierColor: Colors.black45,
       transitionDuration: const Duration(milliseconds: 400),
       pageBuilder: (context, anim1, anim2) {
+        // ✅ Detect screen width for responsiveness
+        final screenWidth = MediaQuery.of(context).size.width;
+        final isSmallScreen = screenWidth < 400;
+
         return Align(
           alignment: Alignment.topCenter,
           child: SafeArea(
             child: Material(
               color: Colors.transparent,
               child: Container(
-                margin: const EdgeInsets.only(top: 16, left: 16, right: 16),
-                padding: const EdgeInsets.all(16),
+                // ✅ Reduced margins and padding for small screens
+                margin: EdgeInsets.only(top: 16, left: isSmallScreen ? 8 : 16, right: isSmallScreen ? 8 : 16),
+                padding: EdgeInsets.all(isSmallScreen ? 12 : 16),
                 constraints: const BoxConstraints(maxWidth: 500),
                 decoration: BoxDecoration(
                   color: Theme.of(context).cardColor,
@@ -642,16 +647,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 child: Row(
                   children: [
                     CircleAvatar(
-                      radius: 26,
+                      // ✅ Shrunk avatar size on mobile
+                      radius: isSmallScreen ? 20 : 26,
                       backgroundColor: Colors.grey[200],
                       backgroundImage: (callArgs['remoteAvatar'] != null && callArgs['remoteAvatar'].toString().isNotEmpty && !callArgs['remoteAvatar'].toString().contains('default-user')) 
                           ? NetworkImage(callArgs['remoteAvatar']) 
                           : null,
                       child: (callArgs['remoteAvatar'] == null || callArgs['remoteAvatar'].toString().isEmpty || callArgs['remoteAvatar'].toString().contains('default-user')) 
-                          ? Icon(Icons.person, color: Colors.grey[600], size: 28) 
+                          ? Icon(Icons.person, color: Colors.grey[600], size: isSmallScreen ? 20 : 28) 
                           : null,
                     ),
-                    const SizedBox(width: 16),
+                    SizedBox(width: isSmallScreen ? 10 : 16),
                     Expanded(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -659,17 +665,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                         children: [
                           Text(
                             callArgs['remoteName'], 
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)
+                            // ✅ Reduced title font size and added text overflow protection
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: isSmallScreen ? 14 : 17),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          const SizedBox(height: 4),
+                          SizedBox(height: isSmallScreen ? 2 : 4),
                           Text(
                             callArgs['isVideoCall'] ? "Incoming Video Call..." : "Incoming Voice Call...", 
-                            style: TextStyle(color: Theme.of(context).primaryColor, fontSize: 13, fontWeight: FontWeight.w600)
+                            // ✅ Reduced subtitle font size
+                            style: TextStyle(color: Theme.of(context).primaryColor, fontSize: isSmallScreen ? 11 : 13, fontWeight: FontWeight.w600),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: isSmallScreen ? 6 : 8),
                     GestureDetector(
                       onTap: () {
                         Navigator.pop(context);
@@ -679,21 +691,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                         });
                       },
                       child: Container(
-                        padding: const EdgeInsets.all(14),
+                        // ✅ Reduced reject button padding and icon size
+                        padding: EdgeInsets.all(isSmallScreen ? 10 : 14),
                         decoration: const BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle),
-                        child: const Icon(Icons.call_end, color: Colors.white, size: 22),
+                        child: Icon(Icons.call_end, color: Colors.white, size: isSmallScreen ? 18 : 22),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    SizedBox(width: isSmallScreen ? 8 : 12),
                     GestureDetector(
                       onTap: () {
                         Navigator.pop(context);
                         appRouter.push('/call', extra: callArgs);
                       },
                       child: Container(
-                        padding: const EdgeInsets.all(14),
+                        // ✅ Reduced accept button padding and icon size
+                        padding: EdgeInsets.all(isSmallScreen ? 10 : 14),
                         decoration: const BoxDecoration(color: Color(0xFF4CAF50), shape: BoxShape.circle),
-                        child: Icon(callArgs['isVideoCall'] ? Icons.videocam : Icons.call, color: Colors.white, size: 22),
+                        child: Icon(callArgs['isVideoCall'] ? Icons.videocam : Icons.call, color: Colors.white, size: isSmallScreen ? 18 : 22),
                       ),
                     ),
                   ],

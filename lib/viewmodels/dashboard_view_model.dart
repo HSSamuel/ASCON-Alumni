@@ -8,6 +8,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 
 import '../services/data_service.dart';
 import '../services/auth_service.dart';
+import '../services/socket_service.dart';
 
 class DashboardState {
   final bool isLoading;
@@ -76,10 +77,51 @@ class DashboardState {
 class DashboardNotifier extends StateNotifier<DashboardState> {
   final DataService _dataService = DataService();
   final AuthService _authService = AuthService();
+  final SocketService _socket = SocketService(); // ✅ Inject Socket Service
+  
+  StreamSubscription? _statusSubscription; // ✅ Add subscription to prevent memory leaks
   final Box _cacheBox = Hive.box('ascon_cache');
 
   DashboardNotifier() : super(const DashboardState()) {
     loadData();
+    _setupPresenceListener(); // ✅ Initialize the real-time listener
+  }
+
+  @override
+  void dispose() {
+    _statusSubscription?.cancel(); // ✅ Clean up the listener when the ViewModel is destroyed
+    super.dispose();
+  }
+
+  // ✅ ACTIVE PRESENCE SYNC: Automatically refreshes the UI online dots whenever backend broadcasts.
+  void _setupPresenceListener() {
+    _statusSubscription = _socket.userStatusStream.listen((data) {
+      if (!mounted) return;
+      
+      final String userId = data['userId'].toString();
+      final bool isOnline = data['isOnline'] == true;
+      final dynamic lastSeen = data['lastSeen'];
+
+      // Function to map over the existing list and update the specific user's status
+      Map<String, dynamic> updateItem(dynamic item) {
+        final Map<String, dynamic> map = item is Map ? Map<String, dynamic>.from(item) : {};
+        final String uid = (map['userId'] ?? map['_id'] ?? '').toString();
+        
+        if (uid == userId) {
+          map['isOnline'] = isOnline;
+          if (lastSeen != null) map['lastSeen'] = lastSeen;
+        }
+        return map;
+      }
+
+      // Apply the update to the topAlumni list
+      final updatedTopAlumni = state.topAlumni.map(updateItem).toList();
+
+      // Trigger a state update which will automatically rebuild the UI
+      state = state.copyWith(
+        topAlumni: updatedTopAlumni,
+      );
+    });
   }
 
   Future<void> loadData({bool isRefresh = false}) async {

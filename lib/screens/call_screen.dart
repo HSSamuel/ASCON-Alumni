@@ -69,6 +69,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   StreamSubscription<Map<String, dynamic>>? _userStatusSub; 
   
   Timer? _callTimer;
+  Timer? _ringTimeout; // ✅ ADDED: Failsafe ring timer
   Duration _callDuration = Duration.zero;
   late AnimationController _pulseController;
 
@@ -100,6 +101,13 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         _status = widget.isVideoCall ? "Incoming Video Call..." : "Incoming Call...";
         _pulseController.repeat(reverse: true);
         _playRingtone(); 
+
+        // ✅ ADDED: Prevent indefinite ringing if socket misses the drop event
+        _ringTimeout = Timer(const Duration(seconds: 45), () {
+          if (mounted && !_hasAccepted) {
+            _endCallUI("Missed Call");
+          }
+        });
       }
     } else {
       _status = "Calling...";
@@ -175,6 +183,9 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
   void _acceptIncomingCall() async {
     if (_hasAccepted || _isDisconnecting) return; 
+    
+    _ringTimeout?.cancel(); // ✅ ADDED: Kill ring timeout
+    
     setState(() {
       _hasAccepted = true;
       _status = "Connecting...";
@@ -182,10 +193,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     
     _stopAudio(); 
 
-    // ✅ FIX 3: Ensures the socket is fully connected on cold-start before answering
     if (_socketService.socket == null || !_socketService.socket!.connected) {
        await _socketService.initSocket();
-       // Give it a brief moment to connect
        await Future.delayed(const Duration(milliseconds: 1500));
     }
 
@@ -210,6 +219,13 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     if (!kIsWeb) {
       _callService.setAudioRoute(_selectedAudioRoute); 
     }
+
+    // ✅ ADDED: 10-second failsafe. If caller hung up before we connected, drop out automatically.
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted && _hasAccepted && _callService.remoteUids.isEmpty && !widget.isGroupCall) {
+        _endCallUI("Caller Disconnected");
+      }
+    });
   }
 
   void _rejectCall() {
@@ -238,7 +254,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
   void _listenToEvents() {
     _listener = _callService.callEvents.listen((event) {
-      if (!mounted) return;
+      if (!mounted || _isDisconnecting) return; // ✅ ADDED: Prevent race conditions
       
       if (event == CallEvent.volumeChanged) {
         setState(() {}); 
@@ -285,7 +301,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     });
 
     _socketListener = _socketService.callEvents.listen((event) {
-      if (!mounted) return;
+      if (!mounted || _isDisconnecting) return; // ✅ ADDED: Prevent race conditions
       
       if (event['type'] == 'participant_info' && event['data']['channelName'] == _currentChannel) {
         setState(() {
@@ -334,7 +350,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     });
 
     _userStatusSub = _socketService.userStatusStream.listen((data) {
-       if (!mounted || widget.isIncoming || widget.isGroupCall) return;
+       if (!mounted || widget.isIncoming || widget.isGroupCall || _isDisconnecting) return;
        
        if (data['userId'] == widget.remoteId) {
           if (data['isOnline'] == true && _status == "Calling...") {
@@ -345,7 +361,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   }
 
   void _endCallUI(String message) async {
-    if (!mounted) return;
+    if (!mounted || _isDisconnecting) return; // ✅ ADDED: Prevents executing twice
     setState(() {
       _status = message;
       _isDisconnecting = true; 
@@ -353,6 +369,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     
     _stopAudio(); 
     _stopTimer();
+    _ringTimeout?.cancel(); // ✅ ADDED: Clean up
     _pulseController.stop();
     _callService.leaveCall();
     
@@ -449,6 +466,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _listener?.cancel();
     _socketListener?.cancel();
     _userStatusSub?.cancel();
+    _ringTimeout?.cancel(); // ✅ ADDED: Clean up
     _stopTimer();
     _pulseController.dispose();
     super.dispose();
