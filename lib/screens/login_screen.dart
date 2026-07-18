@@ -193,8 +193,31 @@ class _LoginScreenState extends State<LoginScreen> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result['message']), backgroundColor: Colors.red));
       }
     } catch (e) {
-      if (mounted) setState(() => _isEmailLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Login Error: ${e.toString()}"), backgroundColor: Colors.red));
+      if (!mounted) return;
+      setState(() => _isEmailLoading = false);
+
+      // SANITIZED ERROR HANDLING
+      String rawError = e.toString().toLowerCase();
+      String userFriendlyMessage;
+
+      // Detect common connection/backend suspension issues
+      if (rawError.contains('failed to fetch') || 
+          rawError.contains('xmlhttprequest') || 
+          rawError.contains('socketexception') ||
+          rawError.contains('connection refused')) {
+        userFriendlyMessage = "Service is currently unavailable. Please try again in a moment.";
+      } else {
+        // Fallback for other errors, stripping generic "Exception:" text if present
+        userFriendlyMessage = e.toString().replaceAll(RegExp(r'^Exception:\s*'), '');
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(userFriendlyMessage), 
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        )
+      );
     }
   }
 
@@ -233,7 +256,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextFormField(
                     controller: _emailController, 
                     enabled: !isAnyLoading, 
-                    textInputAction: TextInputAction.next, // ✅ Push to the next field
+                    textInputAction: TextInputAction.next, // Push to the next field
                     decoration: InputDecoration(
                       labelText: 'Email Address', prefixIcon: Icon(Icons.email_outlined, color: primaryColor, size: 20),
                       filled: true, 
@@ -246,8 +269,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: _passwordController, 
                     enabled: !isAnyLoading, 
                     obscureText: _obscurePassword,
-                    textInputAction: TextInputAction.done, // ✅ Converts enter key to done/submit
-                    onFieldSubmitted: (_) { // ✅ Execute Login on Enter
+                    textInputAction: TextInputAction.done, // Converts enter key to done/submit
+                    onFieldSubmitted: (_) { // Execute Login on Enter
                       if (!isAnyLoading) loginUser();
                     },
                     decoration: InputDecoration(
