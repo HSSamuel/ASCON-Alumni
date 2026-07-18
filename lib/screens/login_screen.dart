@@ -62,7 +62,7 @@ class _LoginScreenState extends State<LoginScreen> {
         rawError.contains('status 502') ||
         rawError.contains('status 500') ||
         rawError.contains('clientexception')) {
-      return "Service is currently unavailable. Please try again in a moment.";
+      return "Service is currently unavailable. Please try again later.";
     }
     
     return error.replaceAll(RegExp(r'^Exception:\s*'), '');
