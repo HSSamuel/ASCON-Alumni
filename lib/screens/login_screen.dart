@@ -50,6 +50,24 @@ class _LoginScreenState extends State<LoginScreen> {
     if (mounted) setState(() => _canCheckBiometrics = available);
   }
 
+  // ✅ Centralized error sanitizer for both returned messages and thrown exceptions
+  String _getFriendlyErrorMessage(String error) {
+    String rawError = error.toLowerCase();
+    
+    if (rawError.contains('failed to fetch') || 
+        rawError.contains('xmlhttprequest') || 
+        rawError.contains('socketexception') ||
+        rawError.contains('connection refused') ||
+        rawError.contains('status 503') ||
+        rawError.contains('status 502') ||
+        rawError.contains('status 500') ||
+        rawError.contains('clientexception')) {
+      return "Service is currently unavailable. Please try again in a moment.";
+    }
+    
+    return error.replaceAll(RegExp(r'^Exception:\s*'), '');
+  }
+
   void _showBiometricOptInDialog(Map<String, dynamic> user, String email, String password) {
     showDialog(
       context: context,
@@ -101,8 +119,9 @@ class _LoginScreenState extends State<LoginScreen> {
         if (result['success']) {
           _handleLoginSuccess(result['data']['user']);
         } else {
+          // ✅ Apply sanitization here
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(result['message']), backgroundColor: Colors.red)
+            SnackBar(content: Text(_getFriendlyErrorMessage(result['message'])), backgroundColor: Colors.red)
           );
         }
       } else {
@@ -157,7 +176,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _navigateToHome() async {
     if (!mounted) return;
-    // We already checked permissions in router.dart before they reached here
     context.go('/home');
   }
 
@@ -190,30 +208,22 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       } else {
         setState(() => _isEmailLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result['message']), backgroundColor: Colors.red));
+        // ✅ SANITIZE RETURNED ERRORS FROM THE SERVICE
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_getFriendlyErrorMessage(result['message'])), 
+            backgroundColor: Colors.red
+          )
+        );
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _isEmailLoading = false);
 
-      // SANITIZED ERROR HANDLING
-      String rawError = e.toString().toLowerCase();
-      String userFriendlyMessage;
-
-      // Detect common connection/backend suspension issues
-      if (rawError.contains('failed to fetch') || 
-          rawError.contains('xmlhttprequest') || 
-          rawError.contains('socketexception') ||
-          rawError.contains('connection refused')) {
-        userFriendlyMessage = "Service is currently unavailable. Please try again in a moment.";
-      } else {
-        // Fallback for other errors, stripping generic "Exception:" text if present
-        userFriendlyMessage = e.toString().replaceAll(RegExp(r'^Exception:\s*'), '');
-      }
-
+      // ✅ SANITIZE THROWN EXCEPTIONS
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(userFriendlyMessage), 
+          content: Text(_getFriendlyErrorMessage(e.toString())), 
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
         )
